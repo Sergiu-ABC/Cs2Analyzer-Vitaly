@@ -1,0 +1,13 @@
+# Secret Environment Variables
+.env
+
+# Maven Compiled Files
+target/
+
+# IntelliJ IDEA Specific Files
+.idea/
+*.iml
+
+# Local Database Files
+*.db
+*.sqlite
