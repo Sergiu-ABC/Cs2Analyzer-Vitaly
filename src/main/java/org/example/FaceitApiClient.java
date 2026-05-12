@@ -38,7 +38,7 @@ public class FaceitApiClient {
                 return profile;
 
             } catch (Exception e) {
-                System.out.println("❌ Parsing error in getPlayerProfile: " + e.getMessage());
+                System.out.println(" Parsing error in getPlayerProfile: " + e.getMessage());
             }
         }
         return null;
@@ -73,7 +73,7 @@ public class FaceitApiClient {
                 return null;
             }
         } catch (Exception e) {
-            System.out.println("❌ Connection Error: " + e.getMessage());
+            System.out.println(" Connection Error: " + e.getMessage());
             return null;
         }
     }

@@ -21,7 +21,7 @@ public class Data_Model {
             System.out.println("🗄️ Database hooked up successfully!");
 
         } catch (SQLException e) {
-            System.out.println("❌ DB Init Error: " + e.getMessage());
+            System.out.println(" DB Init Error: " + e.getMessage());
         }
     }
 
@@ -40,7 +40,7 @@ public class Data_Model {
             pstmt.executeUpdate();
 
         } catch (SQLException e) {
-            System.out.println("❌ DB Save Error: " + e.getMessage());
+            System.out.println(" DB Save Error: " + e.getMessage());
         }
     }
 
@@ -64,7 +64,7 @@ public class Data_Model {
                 ));
             }
         } catch (SQLException e) {
-            System.out.println("❌ DB Fetch Error: " + e.getMessage());
+            System.out.println(" DB Fetch Error: " + e.getMessage());
         }
         return topPlayers;
     }

@@ -11,7 +11,7 @@ import java.util.List;
 public class DiscordBot extends ListenerAdapter {
     private final FaceitApiClient faceitClient = new FaceitApiClient();
     private final RoleAnalyzer analyzer = new RoleAnalyzer();
-    private final Data_Model db = new Data_Model(); // <-- THE NEW DATABASE ENGINE
+    private final Data_Model db = new Data_Model();
     private final Gson gson = new Gson();
 
 
@@ -85,7 +85,7 @@ public class DiscordBot extends ListenerAdapter {
             if (parts.length == 2) {
                 sendCompare(event, parts[0], parts[1]);
             } else {
-                event.getChannel().sendMessage("❌ Use the format: `!compare [player1] [player2]`").queue();
+                event.getChannel().sendMessage(" Use the format: `!compare [player1] [player2]`").queue();
             }
         }
     }
@@ -111,7 +111,7 @@ public class DiscordBot extends ListenerAdapter {
 
 
     private void sendLeaderboard(MessageReceivedEvent event) {
-        List<Data_Model.PlayerRecord> topPlayers = db.getTopPlayers(10); // Grab top 10
+        List<Data_Model.PlayerRecord> topPlayers = db.getTopPlayers(10);
 
         if (topPlayers.isEmpty()) {
             event.getChannel().sendMessage("📭 The leaderboard is empty! Scan some players with `!stats` or `!role` to add them to the database.").queue();
@@ -120,7 +120,7 @@ public class DiscordBot extends ListenerAdapter {
 
         EmbedBuilder embed = new EmbedBuilder();
         embed.setTitle("🏆 Server ELO Leaderboard");
-        embed.setColor(new Color(255, 215, 0)); // Gold
+        embed.setColor(new Color(255, 215, 0));
 
         StringBuilder board = new StringBuilder();
         int rank = 1;

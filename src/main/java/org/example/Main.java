@@ -19,7 +19,7 @@ public class Main {
             System.out.println("✅ Vitaly Discord Bot is ONLINE!");
 
         } catch (Exception e) {
-            System.out.println("❌ Critical Error: Could not start the Discord Bot.");
+            System.out.println("❌ -Critical Error: Could not start the Discord Bot.");
             e.printStackTrace();
         }
     }
