@@ -11,7 +11,7 @@ import java.net.http.HttpResponse;
 public class FaceitApiClient {
 
 
-    private static final Dotenv dotenv = Dotenv.load();
+    private static final Dotenv dotenv = Dotenv.configure().ignoreIfMissing().load();
     private static final String API_KEY = dotenv.get("FACEIT_API_KEY");
 
     private final HttpClient client = HttpClient.newHttpClient();
