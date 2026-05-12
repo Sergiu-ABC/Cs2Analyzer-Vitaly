@@ -10,10 +10,19 @@ import java.net.http.HttpResponse;
 
 public class FaceitApiClient {
 
-    private static final String API_KEY = System.getenv("FACEIT_API_KEY") != null
-            ? System.getenv("FACEIT_API_KEY")
-            : Dotenv.load().get("FACEIT_API_KEY");
+    private static String getApiKey() {
+        String key = System.getenv("FACEIT_API_KEY");
+        if (key == null) {
+            try {
+                key = Dotenv.load().get("FACEIT_API_KEY");
+            } catch (Exception e) {
+                System.out.println("❌ CRITICAL ERROR: FACEIT_API_KEY is missing! Please add it to Railway Variables.");
+            }
+        }
+        return key;
+    }
 
+    private static final String API_KEY = getApiKey();
     private final HttpClient client = HttpClient.newHttpClient();
 
     public FaceitProfile getPlayerProfile(String nickname) {
@@ -25,10 +34,8 @@ public class FaceitApiClient {
                 JsonObject root = JsonParser.parseString(response).getAsJsonObject();
                 FaceitProfile profile = new FaceitProfile();
 
-
                 profile.id = root.get("player_id").getAsString();
                 profile.avatarUrl = root.has("avatar") ? root.get("avatar").getAsString() : "";
-
 
                 if (root.has("games") && root.getAsJsonObject("games").has("cs2")) {
                     JsonObject cs2 = root.getAsJsonObject("games").getAsJsonObject("cs2");
@@ -45,7 +52,6 @@ public class FaceitApiClient {
     }
 
     public String getPlayerStats(String playerId) {
-
         String cs2Url = "https://open.faceit.com/data/v4/players/" + playerId + "/stats/cs2";
         String response = makeRequest(cs2Url);
 

@@ -6,9 +6,17 @@ import io.github.cdimascio.dotenv.Dotenv;
 
 public class Main {
     public static void main(String[] args) {
-        String discordToken = System.getenv("DISCORD_TOKEN") != null
-                ? System.getenv("DISCORD_TOKEN")
-                : Dotenv.load().get("DISCORD_TOKEN");
+
+        String discordToken = System.getenv("DISCORD_TOKEN");
+
+        if (discordToken == null) {
+            try {
+                discordToken = Dotenv.load().get("DISCORD_TOKEN");
+            } catch (Exception e) {
+                System.out.println("❌ CRITICAL ERROR: DISCORD_TOKEN is missing! Please add it to Railway Variables.");
+                return;
+            }
+        }
 
         int port = System.getenv("PORT") != null ? Integer.parseInt(System.getenv("PORT")) : 8080;
 
