@@ -2,7 +2,9 @@ package org.example;
 
 import io.javalin.Javalin;
 import com.google.gson.Gson;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -10,62 +12,95 @@ import java.util.concurrent.TimeUnit;
 public class WebDashboard {
     private final FaceitApiClient faceitClient = new FaceitApiClient();
     private final RoleAnalyzer analyzer = new RoleAnalyzer();
+    private final Data_Model db = new Data_Model();
     private final Gson gson = new Gson();
 
-
     private final ConcurrentHashMap<String, Long> lastRequestTime = new ConcurrentHashMap<>();
-    private static final long RATE_LIMIT_MS = TimeUnit.SECONDS.toMillis(5);
+    private static final long RATE_LIMIT_MS = TimeUnit.SECONDS.toMillis(3);
 
     public void startServer(int port) {
         Javalin app = Javalin.create().start(port);
-        System.out.println("✅ Web Dashboard running at: http://localhost:" + port);
+        System.out.println("Vitaly Web Engine ONLINE: http://localhost:" + port);
 
-        app.get("/", ctx -> {
-            ctx.html(getHtmlLayout());
+        app.get("/", ctx -> ctx.html(getHtmlLayout()));
+
+        app.get("/api/leaderboard", ctx -> {
+            ctx.json(db.getTopPlayers(15));
         });
 
-
-        app.get("/api/analyze/{nickname}", ctx -> {
+        app.get("/api/player/{nickname}", ctx -> {
             String ip = ctx.ip();
             long now = System.currentTimeMillis();
             Long last = lastRequestTime.get(ip);
 
             if (last != null && (now - last) < RATE_LIMIT_MS) {
-                ctx.status(429).json(Map.of("success", false, "error", "Too many requests. Please wait a few seconds."));
+                ctx.status(429).json(Map.of("success", false, "error", "Rate limit active. Please wait."));
                 return;
             }
             lastRequestTime.put(ip, now);
 
             String nickname = ctx.pathParam("nickname");
             FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
+
             if (profile != null) {
                 String rawJson = faceitClient.getPlayerStats(profile.id);
                 if (rawJson != null) {
                     Cs2Stats stats = gson.fromJson(rawJson, Cs2Stats.class);
                     String roleResult = analyzer.determineRole(stats);
 
-                    Map<String, Object> responseData = new HashMap<>();
-                    responseData.put("success", true);
-                    responseData.put("nickname", nickname);
-                    responseData.put("role", roleResult);
+                    db.savePlayer(nickname, profile.elo, stats.getKd(), stats.getWinRate());
 
-                    responseData.put("kd", stats.getKd());
-                    responseData.put("adr", stats.getAdr());
-                    responseData.put("hs", stats.getHs());
-                    responseData.put("winRate", stats.getWinRate());
+                    Map<String, Object> resp = new HashMap<>();
+                    resp.put("success", true);
+                    resp.put("nickname", nickname);
+                    resp.put("elo", profile.elo);
+                    resp.put("level", profile.level);
+                    resp.put("avatar", profile.avatarUrl);
+                    resp.put("role", roleResult);
 
-                    responseData.put("matches", stats.getMatches());
-                    responseData.put("wins", stats.getTotalWins());
-                    responseData.put("entry", Math.round(stats.getEntrySuccess() * 100));
-                    responseData.put("utility", stats.getUtilityDmg());
-                    responseData.put("clutch1v2", Math.round(stats.getClutch1v2() * 100));
-                    responseData.put("clutch1v1", Math.round(stats.getClutch1v1() * 100));
-                     ctx.json(responseData);
+                    resp.put("kd", stats.getKd());
+                    resp.put("adr", stats.getAdr());
+                    resp.put("hs", stats.getHs());
+                    resp.put("winRate", stats.getWinRate());
+                    resp.put("entry", Math.round(stats.getEntrySuccess() * 100));
+                    resp.put("clutch1v1", Math.round(stats.getClutch1v1() * 100));
+                    resp.put("clutch1v2", Math.round(stats.getClutch1v2() * 100));
+                    resp.put("sniper", stats.getSniperRate());
+                    resp.put("utility", stats.getUtilityDmg());
+                    resp.put("flashes", stats.getFlashesPerRound());
+                    resp.put("matches", stats.getMatches());
+
+                    resp.put("wins", stats.getTotalWins());
+                    resp.put("streak", stats.getCurrentWinStreak());
+                    resp.put("bestStreak", stats.getLongestWinStreak());
+                    resp.put("avgKills", stats.getAvgKills());
+                    resp.put("aces", stats.getAces());
+                    resp.put("quads", stats.getQuadKills());
+                    resp.put("triples", stats.getTripleKills());
+                    resp.put("totalKills", stats.getTotalKills());
+                    resp.put("totalHs", stats.getTotalHeadshots());
+                    resp.put("mvps", stats.getMvps());
+
+                    List<Cs2Stats.Segment> validMaps = new ArrayList<>();
+                    if (stats.segments != null) {
+                        for (Cs2Stats.Segment s : stats.segments) {
+                            if (s.getMatches() >= 5) validMaps.add(s);
+                        }
+                        validMaps.sort((a, b) -> Double.compare(b.getWinRate(), a.getWinRate()));
+                    }
+
+                    List<Map<String, Object>> mapData = new ArrayList<>();
+                    for (Cs2Stats.Segment s : validMaps) {
+                        mapData.add(Map.of("name", s.getCleanName(), "win", s.getWinRate(), "kd", s.getKd(), "matches", s.getMatches()));
+                    }
+                    resp.put("maps", mapData);
+
+                    ctx.json(resp);
                 } else {
-                    ctx.json(Map.of("success", false, "error", "Could not fetch CS2 stats."));
+                    ctx.json(Map.of("success", false, "error", "Stats unavailable."));
                 }
             } else {
-                ctx.json(Map.of("success", false, "error", "Player not found on FACEIT."));
+                ctx.json(Map.of("success", false, "error", "Player not found."));
             }
         });
     }
@@ -76,122 +111,486 @@ public class WebDashboard {
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
-                <title>CS2 Role Analyzer</title>
+                <title>Vitaly | CS2 Intelligence</title>
                 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
                 <style>
-                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; text-align: center; padding: 40px; margin: 0; }
-                    .container { background-color: #1e1e24; padding: 40px; border-radius: 15px; display: inline-block; width: 100%; max-width: 600px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
-                    h1 { color: #ff4c4c; margin-top: 0; }
-                    input { padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #333; outline: none; background: #2b2b36; color: white; width: 60%; }
-                    button.search-btn { padding: 12px 24px; font-size: 16px; cursor: pointer; background-color: #ff4c4c; color: white; border: none; border-radius: 8px; transition: 0.3s; font-weight: bold; }
-                    button.search-btn:hover { background-color: #ff1c1c; }
+                    :root {
+                        --bg-main: #0d0d12;
+                        --bg-panel: rgba(20, 20, 25, 0.8);
+                        --accent: #ff4c4c;
+                        --accent-hover: #cc0000;
+                        --text-main: #ffffff;
+                        --text-muted: #888888;
+                        --border: rgba(255, 255, 255, 0.1);
+                    }
+                    * { box-sizing: border-box; }
+                    body {
+                        font-family: 'Rajdhani', sans-serif;
+                        background: radial-gradient(circle at top center, #1a1a24 0%, var(--bg-main) 100%);
+                        color: var(--text-main);
+                        margin: 0;
+                        min-height: 100vh;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                    }
+                    .navbar {
+                        width: 100%;
+                        background: rgba(0, 0, 0, 0.5);
+                        border-bottom: 1px solid var(--border);
+                        padding: 15px 40px;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        backdrop-filter: blur(10px);
+                        position: sticky;
+                        top: 0;
+                        z-index: 100;
+                    }
+                    .brand {
+                        font-size: 2rem;
+                        font-weight: 700;
+                        color: var(--accent);
+                        text-shadow: 0 0 10px rgba(255, 76, 76, 0.4);
+                        letter-spacing: 2px;
+                        text-transform: uppercase;
+                    }
+                    .nav-links {
+                        display: flex;
+                        gap: 20px;
+                    }
+                    .nav-btn {
+                        background: none;
+                        border: none;
+                        color: var(--text-muted);
+                        font-family: 'Rajdhani', sans-serif;
+                        font-size: 1.1rem;
+                        font-weight: 600;
+                        text-transform: uppercase;
+                        cursor: pointer;
+                        padding: 10px 15px;
+                        border-bottom: 2px solid transparent;
+                        transition: 0.3s;
+                    }
+                    .nav-btn:hover, .nav-btn.active {
+                        color: var(--text-main);
+                        border-bottom: 2px solid var(--accent);
+                    }
+                    .content-wrapper {
+                        width: 100%;
+                        max-width: 1200px;
+                        padding: 40px 20px;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                    }
+                    .search-box {
+                        display: flex;
+                        gap: 10px;
+                        width: 100%;
+                        max-width: 600px;
+                        margin-bottom: 40px;
+                    }
+                    input {
+                        flex: 1;
+                        padding: 15px 20px;
+                        font-size: 1.2rem;
+                        font-family: 'Rajdhani', sans-serif;
+                        font-weight: 600;
+                        border-radius: 4px;
+                        border: 1px solid #333;
+                        outline: none;
+                        background: rgba(255, 255, 255, 0.05);
+                        color: white;
+                        transition: border-color 0.3s;
+                    }
+                    input:focus { border-color: var(--accent); }
+                    button.action-btn {
+                        padding: 15px 30px;
+                        font-size: 1.2rem;
+                        font-family: 'Rajdhani', sans-serif;
+                        font-weight: 700;
+                        cursor: pointer;
+                        background: linear-gradient(45deg, var(--accent), var(--accent-hover));
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        text-transform: uppercase;
+                        transition: 0.2s;
+                    }
+                    button.action-btn:hover {
+                        transform: translateY(-2px);
+                        box-shadow: 0 5px 15px rgba(255, 76, 76, 0.4);
+                    }
+                    #errorMsg { color: var(--accent); font-size: 1.2rem; font-weight: bold; margin-bottom: 20px; display: none; }
                     
-                    #playerCard { display: none; margin-top: 30px; background: #25252d; padding: 20px; border-radius: 10px; border-left: 5px solid #ff4c4c; text-align: left; }
-                    .role-title { font-size: 22px; font-weight: bold; color: #ffcc00; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+                    .tab-content {
+                        display: none;
+                        width: 100%;
+                        background: var(--bg-panel);
+                        border: 1px solid var(--border);
+                        border-radius: 12px;
+                        padding: 40px;
+                        backdrop-filter: blur(10px);
+                        animation: fadeIn 0.3s ease-in-out;
+                    }
+                    .tab-content.active { display: block; }
+                    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
                     
-                    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-                    .stat-box { background: #1a1a1f; padding: 15px; border-radius: 8px; text-align: center; }
-                    .stat-value { font-size: 24px; font-weight: bold; color: #4CAF50; }
-                    .stat-label { font-size: 12px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
+                    .player-header {
+                        display: flex;
+                        align-items: center;
+                        gap: 20px;
+                        margin-bottom: 30px;
+                        padding-bottom: 20px;
+                        border-bottom: 1px solid var(--border);
+                    }
+                    .avatar { width: 80px; height: 80px; border-radius: 50%; border: 2px solid var(--accent); }
+                    .player-info h2 { margin: 0; font-size: 2.5rem; color: #ffcc00; }
+                    .player-info p { margin: 5px 0 0 0; font-size: 1.2rem; color: var(--text-muted); font-weight: 600; }
                     
-                    .chart-container { width: 100%; max-width: 350px; margin: 20px auto; display: block; }
+                    .esports-layout { display: flex; justify-content: space-between; align-items: center; gap: 30px; }
+                    .stat-column { display: flex; flex-direction: column; gap: 20px; width: 30%; }
+                    .stat-box { background: rgba(0, 0, 0, 0.4); border-left: 4px solid var(--accent); padding: 20px; border-radius: 4px; }
+                    .stat-box.blue { border-color: #00ccff; }
+                    .stat-box.purple { border-color: #9d00ff; }
+                    .stat-value { font-size: 2.5rem; font-weight: 700; line-height: 1; margin-bottom: 5px; }
+                    .stat-label { font-size: 1rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; }
+                    .chart-center { width: 40%; max-width: 400px; }
+
+                    .combat-grid, .advanced-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+                    .bar-container { margin-top: 10px; width: 100%; background: rgba(255,255,255,0.1); height: 6px; border-radius: 3px; overflow: hidden; }
+                    .bar-fill { height: 100%; background: var(--accent); transition: width 1s ease-in-out; }
+                    .bar-fill.blue { background: #00ccff; }
+
+                    .maps-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+                    .map-card { background: rgba(0,0,0,0.4); padding: 20px; border-radius: 8px; border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+                    .map-card.best { border-color: #ffcc00; background: rgba(255,204,0,0.05); }
+                    .map-card.worst { border-color: var(--accent); background: rgba(255,76,76,0.05); }
+
+                    .compare-layout { display: flex; gap: 20px; margin-bottom: 30px; justify-content: center; }
+                    .cmp-table { width: 100%; background: rgba(0,0,0,0.4); border-radius: 8px; overflow: hidden; }
+                    .cmp-row { display: flex; border-bottom: 1px solid var(--border); }
+                    .cmp-row:last-child { border-bottom: none; }
+                    .cmp-val { flex: 1; padding: 15px; text-align: center; font-size: 1.5rem; font-weight: bold; }
+                    .cmp-val.win { color: #ffcc00; background: rgba(255,204,0,0.1); }
+                    .cmp-label { flex: 1; padding: 15px; text-align: center; font-size: 1.1rem; color: var(--text-muted); text-transform: uppercase; background: rgba(255,255,255,0.02); }
+
+                    .leaderboard-table { width: 100%; border-collapse: collapse; }
+                    .leaderboard-table th, .leaderboard-table td { padding: 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 1.2rem; }
+                    .leaderboard-table th { color: var(--text-muted); text-transform: uppercase; }
+                    .leaderboard-table tr:hover { background: rgba(255,255,255,0.05); }
+                    .rank-1 { color: #ffcc00; font-weight: bold; font-size: 1.5rem; }
+                    .rank-2 { color: #c0c0c0; font-weight: bold; font-size: 1.5rem; }
+                    .rank-3 { color: #cd7f32; font-weight: bold; font-size: 1.5rem; }
                     
-                    #errorMsg { color: #ff4c4c; margin-top: 20px; font-weight: bold; display: none; }
+                    .role-banner {
+                        font-size: 1.3rem;
+                        line-height: 1.6;
+                        color: #ddd;
+                        padding: 15px;
+                        background: rgba(0, 0, 0, 0.3);
+                        border-radius: 6px;
+                        border-left: 4px solid #ffcc00;
+                        margin-bottom: 20px;
+                    }
                 </style>
             </head>
             <body>
-                <div class="container">
-                    <h1>CS2 AI Analyzer</h1>
-                    <p>Enter a FACEIT Nickname to reveal their playstyle.</p>
-                    <input type="text" id="nickname" placeholder="e.g. Sonaldo30">
-                    <button class="search-btn" onclick="analyzePlayer()">Analyze</button>
-                    
+                <nav class="navbar">
+                    <div class="brand">VITALY ENGINE</div>
+                    <div class="nav-links">
+                        <button class="nav-btn active" onclick="switchTab('tab-dna', this)">DNA</button>
+                        <button class="nav-btn" onclick="switchTab('tab-combat', this)">Combat</button>
+                        <button class="nav-btn" onclick="switchTab('tab-advanced', this)">Advanced</button>
+                        <button class="nav-btn" onclick="switchTab('tab-maps', this)">Maps</button>
+                        <button class="nav-btn" onclick="switchTab('tab-compare', this)">Compare</button>
+                        <button class="nav-btn" onclick="switchTab('tab-leaderboard', this)">Leaderboard</button>
+                    </div>
+                </nav>
+
+                <div class="content-wrapper">
                     <div id="errorMsg"></div>
 
-                    <div id="playerCard">
-                        <div class="role-title" id="roleText"></div>
-                        
-                        <div class="stat-grid">
-                            <div class="stat-box">
-                                <div class="stat-value" id="valKD"></div>
-                                <div class="stat-label">K/D Ratio</div>
-                            </div>
-                            <div class="stat-box">
-                                <div class="stat-value" id="valADR"></div>
-                                <div class="stat-label">Avg Damage</div>
-                            </div>
+                    <div id="tab-dna" class="tab-content active">
+                        <div class="search-box">
+                            <input type="text" id="searchInput" placeholder="ENTER FACEIT NAME..." onkeypress="if(event.key === 'Enter') loadPlayer()">
+                            <button class="action-btn" onclick="loadPlayer()">SCAN</button>
                         </div>
+                        <div id="dna-container" style="display:none;">
+                            <div class="player-header">
+                                <img id="p-avatar" class="avatar" src="" alt="avatar">
+                                <div class="player-info">
+                                    <h2 id="p-name"></h2>
+                                    <p>Level <span id="p-level"></span> • <span id="p-elo"></span> ELO</p>
+                                </div>
+                            </div>
+                            
+                            <div class="role-banner" id="roleText"></div>
 
-                        <div class="chart-container">
-                            <canvas id="radarChart"></canvas>
+                            <div class="esports-layout">
+                                <div class="stat-column">
+                                    <div class="stat-box"><div class="stat-value" id="valKD"></div><div class="stat-label">Kill/Death Ratio</div></div>
+                                    <div class="stat-box"><div class="stat-value" id="valADR"></div><div class="stat-label">Average Damage</div></div>
+                                    <div class="stat-box"><div class="stat-value" id="valHS"></div><div class="stat-label">Headshot %</div></div>
+                                </div>
+                                <div class="chart-center"><canvas id="radarChart"></canvas></div>
+                                <div class="stat-column">
+                                    <div class="stat-box blue"><div class="stat-value" id="valWin"></div><div class="stat-label">Win Rate %</div></div>
+                                    <div class="stat-box blue"><div class="stat-value" id="valEntry"></div><div class="stat-label">Entry Success %</div></div>
+                                    <div class="stat-box blue"><div class="stat-value" id="valClutch"></div><div class="stat-label">Clutch 1v1 %</div></div>
+                                </div>
+                            </div>
                         </div>
-                        
+                    </div>
+
+                    <div id="tab-combat" class="tab-content">
+                        <h2 style="color:var(--accent); margin-top:0;">COMBAT DASHBOARD</h2>
+                        <div class="combat-grid" id="combat-container"></div>
+                    </div>
+
+                    <div id="tab-advanced" class="tab-content">
+                        <h2 style="color:#9d00ff; margin-top:0;">CAREER DEEP SCAN</h2>
+                        <div class="advanced-grid" id="advanced-container"></div>
+                    </div>
+
+                    <div id="tab-maps" class="tab-content">
+                        <h2 style="color:#00ccff; margin-top:0;">MAP MASTERY</h2>
+                        <div class="maps-grid" id="maps-container"></div>
+                    </div>
+
+                    <div id="tab-compare" class="tab-content">
+                        <div class="compare-layout">
+                            <input type="text" id="cmp1" placeholder="Player 1">
+                            <h2 style="margin:0; padding:10px; color:#555;">VS</h2>
+                            <input type="text" id="cmp2" placeholder="Player 2">
+                            <button class="action-btn" onclick="loadCompare()">FIGHT</button>
+                        </div>
+                        <div id="compare-container"></div>
+                    </div>
+
+                    <div id="tab-leaderboard" class="tab-content">
+                        <h2 style="color:#ffcc00; margin-top:0;">SERVER LEADERBOARD</h2>
+                        <table class="leaderboard-table">
+                            <thead><tr><th>Rank</th><th>Player</th><th>ELO</th><th>K/D Ratio</th><th>Win Rate</th></tr></thead>
+                            <tbody id="leaderboard-body"></tbody>
+                        </table>
                     </div>
                 </div>
-            
+
                 <script>
+                    let currentData = null;
                     let myRadarChart = null;
 
-                    async function analyzePlayer() {
-                        const nickname = document.getElementById('nickname').value;
-                        const errorMsg = document.getElementById('errorMsg');
-                        const playerCard = document.getElementById('playerCard');
-                        
-                        if(!nickname) return;
-                        
-                        errorMsg.style.display = 'none';
-                        playerCard.style.display = 'none';
-                        document.getElementById('roleText').innerText = "Scanning...";
-                        playerCard.style.display = 'block';
-            
-                        const response = await fetch('/api/analyze/' + nickname);
-                        const data = await response.json();
-                        
-                        if(data.success) {
-                            document.getElementById('roleText').innerText = data.role;
-                            document.getElementById('valKD').innerText = data.kd;
-                            document.getElementById('valADR').innerText = data.adr;
-                            
-                            drawChart(data);
+                    function switchTab(tabId, btn) {
+                        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+                        document.getElementById(tabId).classList.add('active');
+                        btn.classList.add('active');
+                        document.getElementById('errorMsg').style.display = 'none';
+
+                        if (tabId === 'tab-leaderboard') fetchLeaderboard();
+                        else if (currentData && tabId !== 'tab-compare') populateTabs();
+                    }
+
+                    function showError(msg) {
+                        const err = document.getElementById('errorMsg');
+                        err.innerText = msg;
+                        err.style.display = 'block';
+                    }
+
+                    async function fetchAPI(url) {
+                        try {
+                            const res = await fetch(url);
+                            return await res.json();
+                        } catch (e) { return { success: false, error: "Network Error" }; }
+                    }
+
+                    async function loadPlayer() {
+                        const name = document.getElementById('searchInput').value;
+                        if (!name) return;
+                        document.getElementById('errorMsg').style.display = 'none';
+                        const data = await fetchAPI('/api/player/' + name);
+                        if (data.success) {
+                            currentData = data;
+                            document.getElementById('dna-container').style.display = 'block';
+                            populateTabs();
                         } else {
-                            playerCard.style.display = 'none';
-                            errorMsg.style.display = 'block';
-                            errorMsg.innerText = data.error;
+                            showError(data.error);
                         }
                     }
 
-                    function drawChart(data) {
-                        const ctx = document.getElementById('radarChart').getContext('2d');
+                    function formatDiscordText(text) {
+                        return text.replace(/\\*\\*(.*?)\\*\\*/g, '<strong style="color: #ffcc00;">$1</strong>')
+                                   .replace(/\\n/g, '<br>');
+                    }
+
+                    function populateTabs() {
+                        if (!currentData) return;
+                        const d = currentData;
                         
-                        if (myRadarChart != null) {
-                            myRadarChart.destroy();
+                        document.getElementById('p-avatar').src = d.avatar || 'https://via.placeholder.com/80';
+                        document.getElementById('p-name').innerText = d.nickname;
+                        document.getElementById('p-level').innerText = d.level;
+                        document.getElementById('p-elo').innerText = d.elo;
+                        
+                        document.getElementById('valKD').innerText = d.kd.toFixed(2);
+                        document.getElementById('valADR').innerText = d.adr.toFixed(1);
+                        document.getElementById('valHS').innerText = d.hs + '%';
+                        document.getElementById('valWin').innerText = d.winRate + '%';
+                        document.getElementById('valEntry').innerText = d.entry + '%';
+                        document.getElementById('valClutch').innerText = d.clutch1v1 + '%';
+                        
+                        document.getElementById('roleText').innerHTML = formatDiscordText(d.role);
+
+                        drawChart(d);
+                        
+                        const cHtml = `
+                            ${makeBar('Entry Success', d.entry + '%', d.entry, 100, '')}
+                            ${makeBar('1v1 Clutch', d.clutch1v1 + '%', d.clutch1v1, 100, 'blue')}
+                            ${makeBar('1v2 Clutch', d.clutch1v2 + '%', d.clutch1v2, 100, 'blue')}
+                            ${makeBar('Utility Damage', d.utility, d.utility, 35, '')}
+                            ${makeBar('Flashes / Rnd', d.flashes, d.flashes, 1.2, '')}
+                            ${makeBar('Sniper KPR', d.sniper, d.sniper, 0.4, 'blue')}
+                        `;
+                        document.getElementById('combat-container').innerHTML = cHtml;
+
+                        const aHtml = `
+                            <div class="stat-box purple"><div class="stat-value">${d.streak}</div><div class="stat-label">Current Win Streak</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.bestStreak}</div><div class="stat-label">Best Win Streak</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.avgKills}</div><div class="stat-label">Avg Kills / Match</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.totalKills}</div><div class="stat-label">Total Kills</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.totalHs}</div><div class="stat-label">Total Headshots</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.mvps}</div><div class="stat-label">Total MVPs</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.aces}</div><div class="stat-label">Aces (5K)</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.quads}</div><div class="stat-label">Quad Kills (4K)</div></div>
+                            <div class="stat-box purple"><div class="stat-value">${d.triples}</div><div class="stat-label">Triple Kills (3K)</div></div>
+                        `;
+                        document.getElementById('advanced-container').innerHTML = aHtml;
+
+                        let mHtml = '';
+                        if (d.maps && d.maps.length > 0) {
+                            d.maps.forEach((m, idx) => {
+                                let cls = idx === 0 ? 'best' : (idx === d.maps.length - 1 ? 'worst' : '');
+                                let icon = idx === 0 ? '👑' : (idx === d.maps.length - 1 ? '🗑️' : '🗺️');
+                                mHtml += `
+                                    <div class="map-card ${cls}">
+                                        <div><div class="stat-value" style="font-size:1.8rem;">${icon} ${m.name}</div><div class="stat-label">${m.matches} Matches</div></div>
+                                        <div style="text-align:right;"><div class="stat-value" style="color:#fff;">${m.win}%</div><div class="stat-label">K/D: ${m.kd}</div></div>
+                                    </div>
+                                `;
+                            });
+                        } else {
+                            mHtml = '<p>Not enough map data found.</p>';
                         }
+                        document.getElementById('maps-container').innerHTML = mHtml;
+                    }
+
+                    function makeBar(label, valTxt, valNum, maxNum, colorCls) {
+                        let pct = Math.min(100, (valNum / maxNum) * 100);
+                        return `
+                            <div class="stat-box ${colorCls}">
+                                <div style="display:flex; justify-content:space-between;">
+                                    <div class="stat-label">${label}</div>
+                                    <div class="stat-value" style="font-size:1.2rem;">${valTxt}</div>
+                                </div>
+                                <div class="bar-container"><div class="bar-fill ${colorCls}" style="width: ${pct}%"></div></div>
+                            </div>
+                        `;
+                    }
+
+                    function drawChart(d) {
+                        const ctx = document.getElementById('radarChart').getContext('2d');
+                        if (myRadarChart != null) myRadarChart.destroy();
+                        
+                        const norm = (v, min, max) => Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100));
+                        
+                        const sKD = norm(d.kd, 0.7, 1.4);
+                        const sADR = norm(d.adr, 60, 100);
+                        const sHS = norm(d.hs, 35, 65);
+                        const sClutch = norm(d.clutch1v1, 35, 75);
+                        const sEntry = norm(d.entry, 35, 65);
+                        const sWin = norm(d.winRate, 45, 60);
 
                         myRadarChart = new Chart(ctx, {
                             type: 'radar',
                             data: {
-                                labels: ['Win Rate %', 'Headshot %', 'Entry Success %', '1v1 Clutch %'],
+                                labels: ['K/D', 'ADR', 'Headshot %', 'Clutch %', 'Entry %', 'Win Rate %'],
                                 datasets: [{
-                                    label: 'Player DNA',
-                                    data: [data.winRate, data.hs, data.entry, data.clutch1v1],
-                                    backgroundColor: 'rgba(255, 76, 76, 0.3)',
+                                    data: [sKD, sADR, sHS, sClutch, sEntry, sWin],
+                                    backgroundColor: 'rgba(255, 76, 76, 0.2)',
                                     borderColor: 'rgba(255, 76, 76, 1)',
-                                    pointBackgroundColor: '#ffcc00',
-                                    borderWidth: 2
+                                    pointBackgroundColor: '#fff',
+                                    borderWidth: 2,
+                                    pointRadius: 4
                                 }]
                             },
                             options: {
-                                scales: {
-                                    r: {
-                                        angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
-                                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                                        pointLabels: { color: '#ffffff', font: { size: 13, weight: 'bold' } },
-                                        ticks: { display: false, min: 0, max: 100 }
-                                    }
-                                },
-                                plugins: { legend: { display: false } }
+                                scales: { r: { angleLines: { color: 'rgba(255,255,255,0.1)' }, grid: { color: 'rgba(255,255,255,0.1)' }, pointLabels: { color: '#aaa', font: { family: 'Rajdhani', size: 14, weight: '600' } }, ticks: { display: false, min: 0, max: 100 } } },
+                                plugins: { legend: { display: false }, tooltip: { enabled: false } }
                             }
                         });
+                    }
+
+                    async function loadCompare() {
+                        const n1 = document.getElementById('cmp1').value;
+                        const n2 = document.getElementById('cmp2').value;
+                        if (!n1 || !n2) return;
+                        
+                        document.getElementById('compare-container').innerHTML = '<h3 style="text-align:center;">Fetching Data...</h3>';
+                        
+                        const [d1, d2] = await Promise.all([ fetchAPI('/api/player/' + n1), fetchAPI('/api/player/' + n2) ]);
+                        if (!d1.success || !d2.success) {
+                            document.getElementById('compare-container').innerHTML = '<h3 style="color:var(--accent); text-align:center;">Error fetching one or both players.</h3>';
+                            return;
+                        }
+
+                        let html = `
+                            <div style="display:flex; justify-content:space-between; margin-bottom: 20px;">
+                                <div style="text-align:center; flex:1;"><h2 style="margin:0; color:var(--accent);">${d1.nickname}</h2><p style="margin:0; color:var(--text-muted);">Level ${d1.level} (${d1.elo})</p></div>
+                                <div style="text-align:center; flex:1;"><h2 style="margin:0; color:#00ccff;">${d2.nickname}</h2><p style="margin:0; color:var(--text-muted);">Level ${d2.level} (${d2.elo})</p></div>
+                            </div>
+                            <div class="cmp-table">
+                                ${cmpRow('K/D Ratio', d1.kd, d2.kd, false)}
+                                ${cmpRow('Win Rate %', d1.winRate, d2.winRate, false)}
+                                ${cmpRow('ADR', d1.adr, d2.adr, false)}
+                                ${cmpRow('Headshot %', d1.hs, d2.hs, false)}
+                                ${cmpRow('Entry Success %', d1.entry, d2.entry, false)}
+                                ${cmpRow('Clutch 1v1 %', d1.clutch1v1, d2.clutch1v1, false)}
+                                ${cmpRow('Total Matches', d1.matches, d2.matches, false)}
+                            </div>
+                        `;
+                        document.getElementById('compare-container').innerHTML = html;
+                    }
+
+                    function cmpRow(label, v1, v2, invert) {
+                        let w1 = invert ? v1 < v2 : v1 > v2;
+                        let w2 = invert ? v2 < v1 : v2 > v1;
+                        let t1 = w1 ? `👑 ${v1}` : `${v1}`;
+                        let t2 = w2 ? `👑 ${v2}` : `${v2}`;
+                        return `
+                            <div class="cmp-row">
+                                <div class="cmp-val ${w1?'win':''}">${t1}</div>
+                                <div class="cmp-label">${label}</div>
+                                <div class="cmp-val ${w2?'win':''}">${t2}</div>
+                            </div>
+                        `;
+                    }
+
+                    async function fetchLeaderboard() {
+                        const data = await fetchAPI('/api/leaderboard');
+                        let html = '';
+                        if (data && data.length > 0) {
+                            data.forEach((p, i) => {
+                                let rCls = i === 0 ? 'rank-1' : (i === 1 ? 'rank-2' : (i === 2 ? 'rank-3' : ''));
+                                let icon = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : (i+1)));
+                                html += `<tr><td class="${rCls}">${icon}</td><td><strong>${p.nickname}</strong></td><td>${p.elo}</td><td>${p.kd}</td><td>${p.winRate}%</td></tr>`;
+                            });
+                        } else {
+                            html = '<tr><td colspan="5" style="text-align:center;">Leaderboard is empty. Scan some players!</td></tr>';
+                        }
+                        document.getElementById('leaderboard-body').innerHTML = html;
                     }
                 </script>
             </body>

@@ -8,8 +8,10 @@ public class Main {
     public static void main(String[] args) {
         Dotenv dotenv = Dotenv.load();
         String discordToken = dotenv.get("DISCORD_TOKEN");
+        int port = System.getenv("PORT") != null ? Integer.parseInt(System.getenv("PORT")) : 8080;
+
         WebDashboard dashboard = new WebDashboard();
-        dashboard.startServer(8080);
+        dashboard.startServer(port);
         try {
             JDABuilder.createDefault(discordToken)
                     .enableIntents(GatewayIntent.MESSAGE_CONTENT)
