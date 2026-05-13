@@ -83,4 +83,29 @@ public class FaceitApiClient {
             return null;
         }
     }
+    public com.google.gson.JsonArray getPlayerMatchHistoryByDate(String playerId, long fromUnix, long toUnix) {
+        String url = "https://open.faceit.com/data/v4/players/" + playerId + "/history?game=cs2&from=" + fromUnix + "&to=" + toUnix + "&limit=50";
+        String response = makeRequest(url);
+        if (response != null) {
+            try {
+                return JsonParser.parseString(response).getAsJsonObject().getAsJsonArray("items");
+            } catch (Exception e) {
+                System.out.println("History Date Error: " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    public com.google.gson.JsonObject getMatchStats(String matchId) {
+        String url = "https://open.faceit.com/data/v4/matches/" + matchId + "/stats";
+        String response = makeRequest(url);
+        if (response != null) {
+            try {
+                return JsonParser.parseString(response).getAsJsonObject();
+            } catch (Exception e) {
+                System.out.println("Match Stats Error: " + e.getMessage());
+            }
+        }
+        return null;
+    }
 }
