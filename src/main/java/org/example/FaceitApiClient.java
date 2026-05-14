@@ -8,8 +8,13 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
+/*
+  Handles all HTTP communication with the FACEIT Data API (v4).
+  Responsible for fetching player profiles, lifetime stats, and match history.
+ */
 public class FaceitApiClient {
 
+    // Retrieves the API key securely from system environment variables or the local .env file
     private static String getApiKey() {
         String key = System.getenv("FACEIT_API_KEY");
         if (key == null) {
@@ -25,6 +30,7 @@ public class FaceitApiClient {
     private static final String API_KEY = getApiKey();
     private final HttpClient client = HttpClient.newHttpClient();
 
+    // Fetches basic profile data (Player ID, Avatar, CS2 ELO, and Skill Level) using a FACEIT nickname
     public FaceitProfile getPlayerProfile(String nickname) {
         String url = "https://open.faceit.com/data/v4/players?nickname=" + nickname;
         String response = makeRequest(url);
@@ -51,10 +57,12 @@ public class FaceitApiClient {
         return null;
     }
 
+    // Retrieves the lifetime CS2 statistics (K/D, Win Rate, Headshots, etc.) for a given Player ID
     public String getPlayerStats(String playerId) {
         String cs2Url = "https://open.faceit.com/data/v4/players/" + playerId + "/stats/cs2";
         String response = makeRequest(cs2Url);
 
+        // Fallback to CS:GO stats if CS2 stats are completely unavailable
         if (response == null) {
             String csgoUrl = "https://open.faceit.com/data/v4/players/" + playerId + "/stats/csgo";
             response = makeRequest(csgoUrl);
@@ -62,6 +70,7 @@ public class FaceitApiClient {
         return response;
     }
 
+    // Internal utility method to execute authorized GET requests to the FACEIT API
     private String makeRequest(String url) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
@@ -83,6 +92,8 @@ public class FaceitApiClient {
             return null;
         }
     }
+
+    // Pulls a chunk of match history for a player strictly between two UNIX timestamps
     public com.google.gson.JsonArray getPlayerMatchHistoryByDate(String playerId, long fromUnix, long toUnix) {
         String url = "https://open.faceit.com/data/v4/players/" + playerId + "/history?game=cs2&from=" + fromUnix + "&to=" + toUnix + "&limit=50";
         String response = makeRequest(url);
@@ -96,6 +107,7 @@ public class FaceitApiClient {
         return null;
     }
 
+    // Retrieves the detailed scoreboard and round-by-round performance data for a specific match ID
     public com.google.gson.JsonObject getMatchStats(String matchId) {
         String url = "https://open.faceit.com/data/v4/matches/" + matchId + "/stats";
         String response = makeRequest(url);
