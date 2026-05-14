@@ -11,9 +11,6 @@ public class EmbedFactory {
 
     private static final Random random = new Random();
 
-    // -------------------------------------------------------------------------
-    // !stats
-    // -------------------------------------------------------------------------
     public static EmbedBuilder buildStats(String nickname, FaceitProfile profile, Cs2Stats stats) {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(EmbedUtils.levelColor(profile.level));
@@ -46,9 +43,6 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !role
-    // -------------------------------------------------------------------------
     public static EmbedBuilder buildRole(String nickname, FaceitProfile profile,
                                          Cs2Stats stats, String roleResult,
                                          String requesterName, String requesterAvatar) {
@@ -94,9 +88,7 @@ public class EmbedFactory {
                 .addOption("Last Year",     "365", "Full year aggregate")
                 .build();
     }
-    // -------------------------------------------------------------------------
-    // !advanced
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildAdvanced(String nickname, FaceitProfile profile, Cs2Stats stats) {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(138, 43, 226));
@@ -128,9 +120,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !maps
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildMaps(String nickname, FaceitProfile profile,
                                          List<Cs2Stats.Segment> validMaps) {
         EmbedBuilder embed = new EmbedBuilder();
@@ -175,9 +165,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !compare
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildCompare(String p1Name, FaceitProfile p1, Cs2Stats stats1,
                                             String p2Name, FaceitProfile p2, Cs2Stats stats2) {
         EmbedBuilder embed = new EmbedBuilder();
@@ -212,9 +200,7 @@ public class EmbedFactory {
                 "**Matches:** " + sA.getMatches();
     }
 
-    // -------------------------------------------------------------------------
-    // !help
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildHelp() {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setTitle("⚡ VITALY — CS2 Intelligence Bot");
@@ -235,9 +221,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !info
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildInfo() {
         String[] intros = {
                 "I don't rush B... I rush FACEIT APIs.",
@@ -290,9 +274,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !leaderboard
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildLeaderboard(java.util.List<Data_Model.PlayerRecord> topPlayers) {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setTitle("🏆 Server ELO Leaderboard");
@@ -319,9 +301,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // !period result
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildPeriodResult(String nickname, String avatarUrl,
                                                  int days, int validMatches,
                                                  int wins, int totalKills,
@@ -344,9 +324,7 @@ public class EmbedFactory {
         return embed;
     }
 
-    // -------------------------------------------------------------------------
-    // Error embeds
-    // -------------------------------------------------------------------------
+
     public static EmbedBuilder buildPlayerNotFound(String nickname) {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(220, 50, 50));

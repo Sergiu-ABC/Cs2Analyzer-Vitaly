@@ -1,4 +1,3 @@
-// CommandHandler.java
 package org.example;
 
 import com.google.gson.Gson;

@@ -47,7 +47,7 @@ public class WebDashboard {
                 }
                 finalStats = gson.fromJson(rawJson, Cs2Stats.class);
             }
-            // --- CUSTOM TIMEFRAME STATS (PARALLELIZED) ---
+
             else {
                 long toUnix = System.currentTimeMillis() / 1000L;
                 long fromUnix = toUnix - (days * 86400L);
@@ -71,13 +71,13 @@ public class WebDashboard {
                 AtomicInteger total5k = new AtomicInteger(0);
                 AtomicReference<Double> totalAdr = new AtomicReference<>(0.0);
 
-                // Extract IDs first
+
                 List<String> matchIds = new ArrayList<>();
                 for (com.google.gson.JsonElement el : history) {
                     matchIds.add(el.getAsJsonObject().get("match_id").getAsString());
                 }
 
-                // Blast requests in parallel using all available CPU cores
+
                 matchIds.parallelStream().forEach(matchId -> {
                     com.google.gson.JsonObject matchStats = faceitClient.getMatchStats(matchId);
                     if (matchStats == null || !matchStats.has("rounds")) return;
@@ -126,14 +126,14 @@ public class WebDashboard {
                     return;
                 }
 
-                // Calculate Averages based on the Atomic counters
+
                 int matches = validMatches.get();
                 double avgKd = totalDeaths.get() > 0 ? (double) totalKills.get() / totalDeaths.get() : totalKills.get();
                 double avgHs = totalKills.get() > 0 ? ((double) totalHs.get() / totalKills.get()) * 100 : 0;
                 double winRate = ((double) wins.get() / matches) * 100;
                 double avgAdr = totalAdr.get() > 0 ? (totalAdr.get() / matches) : 0;
 
-                // Build synthetic JSON payload for RoleAnalyzer
+
                 com.google.gson.JsonObject syntheticRoot = new com.google.gson.JsonObject();
                 com.google.gson.JsonObject lifetime = new com.google.gson.JsonObject();
 
@@ -154,7 +154,7 @@ public class WebDashboard {
                 finalStats = gson.fromJson(syntheticRoot.toString(), Cs2Stats.class);
             }
 
-            // Determine role and save
+
             String roleResult = analyzer.determineRole(finalStats);
             db.savePlayer(nickname, profile.elo, finalStats.getKd(), finalStats.getWinRate());
 
@@ -167,7 +167,6 @@ public class WebDashboard {
                                                     Cs2Stats stats, String roleResult) {
         Map<String, Object> resp = new HashMap<>();
 
-        // Identity
         resp.put("success",  true);
         resp.put("nickname", nickname);
         resp.put("elo",      profile.elo);
@@ -175,7 +174,6 @@ public class WebDashboard {
         resp.put("avatar",   profile.avatarUrl);
         resp.put("role",     roleResult);
 
-        // Core stats
         resp.put("kd",        stats.getKd());
         resp.put("adr",       stats.getAdr());
         resp.put("hs",        stats.getHs());
@@ -188,7 +186,6 @@ public class WebDashboard {
         resp.put("flashes",   stats.getFlashesPerRound());
         resp.put("matches",   stats.getMatches());
 
-        // Advanced
         resp.put("wins",       stats.getTotalWins());
         resp.put("streak",     stats.getCurrentWinStreak());
         resp.put("bestStreak", stats.getLongestWinStreak());
@@ -200,7 +197,6 @@ public class WebDashboard {
         resp.put("totalHs",    stats.getTotalHeadshots());
         resp.put("mvps",       stats.getMvps());
 
-        // Maps
         List<Map<String, Object>> mapData = new ArrayList<>();
         if (stats.segments != null) {
             List<Cs2Stats.Segment> validMaps = new ArrayList<>();

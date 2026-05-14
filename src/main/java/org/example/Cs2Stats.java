@@ -12,7 +12,6 @@ public class Cs2Stats {
     @SerializedName("segments")
     public List<Segment> segments;
 
-    // Reads from the standard lifetime block
     private double parse(String key) {
         if (lifetime == null || !lifetime.containsKey(key)) return 0.0;
         try {
