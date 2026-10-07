@@ -1,28 +1,55 @@
 package org.example;
 
 import com.google.gson.Gson;
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import com.google.gson.JsonParseException;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
+import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.interactions.components.ActionRow;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
+/*
+  Implements every Discord command. Methods here block on FACEIT calls,
+  so DiscordBot always invokes them on its worker pool, never on JDA's event thread.
+ */
 public class CommandHandler {
 
     private final FaceitApiClient faceitClient;
     private final RoleAnalyzer analyzer;
-    private final Data_Model db;
+    private final PlayerRepository db;
+    private final PeriodStatsService periodStats;
     private final Gson gson;
 
     public CommandHandler(FaceitApiClient faceitClient, RoleAnalyzer analyzer,
-                          Data_Model db, Gson gson) {
+                          PlayerRepository db, PeriodStatsService periodStats, Gson gson) {
         this.faceitClient = faceitClient;
         this.analyzer     = analyzer;
         this.db           = db;
+        this.periodStats  = periodStats;
         this.gson         = gson;
+    }
+
+    // A profile plus its lifetime stats, or null after an error embed was already sent.
+    private record Player(FaceitProfile profile, Cs2Stats stats) {}
+
+    private Player loadPlayer(MessageReceivedEvent event, String nickname) {
+        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
+        if (profile == null) { sendError(event, nickname); return null; }
+
+        Cs2Stats stats = parseStats(faceitClient.getPlayerStats(profile.id));
+        if (stats == null) { sendStatError(event, profile.nickname); return null; }
+        return new Player(profile, stats);
+    }
+
+    private Cs2Stats parseStats(String rawJson) {
+        if (rawJson == null) return null;
+        try {
+            return gson.fromJson(rawJson, Cs2Stats.class);
+        } catch (JsonParseException e) {
+            System.err.println("Stats parse error: " + e.getMessage());
+            return null;
+        }
     }
 
     public void handleHelp(MessageReceivedEvent event) {
@@ -34,7 +61,7 @@ public class CommandHandler {
     }
 
     public void handleLeaderboard(MessageReceivedEvent event) {
-        List<Data_Model.PlayerRecord> topPlayers = db.getTopPlayers(10);
+        List<PlayerRepository.PlayerRecord> topPlayers = db.getTopPlayers(10);
         if (topPlayers.isEmpty()) {
             event.getChannel().sendMessage("📭 The leaderboard is empty! Scan players with `!stats` or `!role` first.").queue();
             return;
@@ -43,183 +70,129 @@ public class CommandHandler {
     }
 
     public void handleStats(MessageReceivedEvent event, String nickname) {
-        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-        if (profile == null) { sendError(event, nickname); return; }
+        Player p = loadPlayer(event, nickname);
+        if (p == null) return;
+        String name = p.profile.nickname;
+        db.savePlayer(name, p.profile.elo, p.stats.getKd(), p.stats.getWinRate());
 
-        String rawJson = faceitClient.getPlayerStats(profile.id);
-        if (rawJson == null) { sendStatError(event, nickname); return; }
-
-        Cs2Stats stats = gson.fromJson(rawJson, Cs2Stats.class);
-        db.savePlayer(nickname, profile.elo, stats.getKd(), stats.getWinRate());
-
-        event.getChannel().sendMessageEmbeds(EmbedFactory.buildStats(nickname, profile, stats).build())
-                .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(nickname)))
+        event.getChannel().sendMessageEmbeds(EmbedFactory.buildStats(name, p.profile, p.stats).build())
+                .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(name)))
                 .queue();
     }
 
     public void handleRole(MessageReceivedEvent event, String nickname) {
-        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-        if (profile == null) { sendError(event, nickname); return; }
-
-        String rawJson = faceitClient.getPlayerStats(profile.id);
-        if (rawJson == null) { sendStatError(event, nickname); return; }
-
-        Cs2Stats stats      = gson.fromJson(rawJson, Cs2Stats.class);
-        String roleResult   = analyzer.determineRole(stats);
-        db.savePlayer(nickname, profile.elo, stats.getKd(), stats.getWinRate());
+        Player p = loadPlayer(event, nickname);
+        if (p == null) return;
+        String name = p.profile.nickname;
+        String roleResult = analyzer.determineRole(p.stats);
+        db.savePlayer(name, p.profile.elo, p.stats.getKd(), p.stats.getWinRate());
 
         event.getChannel().sendMessageEmbeds(
-                EmbedFactory.buildRole(nickname, profile, stats, roleResult,
+                EmbedFactory.buildRole(name, p.profile, p.stats, roleResult,
                         event.getAuthor().getName(), event.getAuthor().getAvatarUrl()).build()
-        ).setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(nickname))).queue();
+        ).setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(name))).queue();
     }
 
     public void handleAdvanced(MessageReceivedEvent event, String nickname) {
-        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-        if (profile == null) { sendError(event, nickname); return; }
-
-        String rawJson = faceitClient.getPlayerStats(profile.id);
-        if (rawJson == null) { sendStatError(event, nickname); return; }
-
-        Cs2Stats stats = gson.fromJson(rawJson, Cs2Stats.class);
-        event.getChannel().sendMessageEmbeds(EmbedFactory.buildAdvanced(nickname, profile, stats).build()).queue();
+        Player p = loadPlayer(event, nickname);
+        if (p == null) return;
+        event.getChannel().sendMessageEmbeds(
+                EmbedFactory.buildAdvanced(p.profile.nickname, p.profile, p.stats).build()).queue();
     }
 
     public void handleMaps(MessageReceivedEvent event, String nickname) {
-        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-        if (profile == null) { sendError(event, nickname); return; }
-
-        String rawJson = faceitClient.getPlayerStats(profile.id);
-        if (rawJson == null) { sendStatError(event, nickname); return; }
-
-        Cs2Stats stats = gson.fromJson(rawJson, Cs2Stats.class);
-
-        if (stats.segments == null || stats.segments.isEmpty()) {
-            event.getChannel().sendMessage("❌ Could not find map data for " + nickname).queue();
-            return;
-        }
+        Player p = loadPlayer(event, nickname);
+        if (p == null) return;
+        String name = p.profile.nickname;
 
         List<Cs2Stats.Segment> validMaps = new ArrayList<>();
-        for (Cs2Stats.Segment seg : stats.segments) {
-            if (seg.getMatches() >= 5) validMaps.add(seg);
+        if (p.stats.segments != null) {
+            for (Cs2Stats.Segment seg : p.stats.segments) {
+                if (seg.getMatches() >= 5) validMaps.add(seg);
+            }
         }
-
         if (validMaps.isEmpty()) {
-            event.getChannel().sendMessage("❌ " + nickname + " hasn't played enough maps yet.").queue();
+            event.getChannel().sendMessageEmbeds(
+                    EmbedFactory.buildError(name + " hasn't played 5+ matches on any map yet.").build()).queue();
             return;
         }
 
         validMaps.sort((a, b) -> Double.compare(b.getWinRate(), a.getWinRate()));
-        event.getChannel().sendMessageEmbeds(EmbedFactory.buildMaps(nickname, profile, validMaps).build()).queue();
+        event.getChannel().sendMessageEmbeds(EmbedFactory.buildMaps(name, p.profile, validMaps).build()).queue();
     }
 
     public void handleCompare(MessageReceivedEvent event, String p1Name, String p2Name) {
-        FaceitProfile p1 = faceitClient.getPlayerProfile(p1Name);
-        if (p1 == null) { sendError(event, p1Name); return; }
+        Player p1 = loadPlayer(event, p1Name);
+        if (p1 == null) return;
+        Player p2 = loadPlayer(event, p2Name);
+        if (p2 == null) return;
 
-        String raw1 = faceitClient.getPlayerStats(p1.id);
-        if (raw1 == null) { sendStatError(event, p1Name); return; }
-
-        FaceitProfile p2 = faceitClient.getPlayerProfile(p2Name);
-        if (p2 == null) { sendError(event, p2Name); return; }
-
-        String raw2 = faceitClient.getPlayerStats(p2.id);
-        if (raw2 == null) { sendStatError(event, p2Name); return; }
-
-        Cs2Stats stats1 = gson.fromJson(raw1, Cs2Stats.class);
-        Cs2Stats stats2 = gson.fromJson(raw2, Cs2Stats.class);
-
-        db.savePlayer(p1Name, p1.elo, stats1.getKd(), stats1.getWinRate());
-        db.savePlayer(p2Name, p2.elo, stats2.getKd(), stats2.getWinRate());
+        db.savePlayer(p1.profile.nickname, p1.profile.elo, p1.stats.getKd(), p1.stats.getWinRate());
+        db.savePlayer(p2.profile.nickname, p2.profile.elo, p2.stats.getKd(), p2.stats.getWinRate());
 
         event.getChannel().sendMessageEmbeds(
-                EmbedFactory.buildCompare(p1Name, p1, stats1, p2Name, p2, stats2).build()
+                EmbedFactory.buildCompare(p1.profile.nickname, p1.profile, p1.stats,
+                        p2.profile.nickname, p2.profile, p2.stats).build()
         ).queue();
     }
 
+    // !period <nickname>: advertised in !help but previously never wired up.
+    public void handlePeriod(MessageReceivedEvent event, String nickname) {
+        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
+        if (profile == null) { sendError(event, nickname); return; }
+
+        event.getChannel().sendMessageEmbeds(EmbedFactory.buildPeriodPrompt(profile.nickname).build())
+                .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(profile.nickname)))
+                .queue();
+    }
+
+    /*
+      Called after DiscordBot has already acknowledged the interaction (deferEdit),
+      so this may take as long as the FACEIT calls need.
+     */
     public void handlePeriodInteraction(StringSelectInteractionEvent event) {
-        if (!event.getComponentId().startsWith("time_selector:")) return;
+        String nickname = event.getComponentId().substring("time_selector:".length());
+        int days;
+        try {
+            days = Integer.parseInt(event.getValues().get(0));
+        } catch (RuntimeException e) {
+            return;
+        }
+        var hook = event.getHook();
 
-        String nickname = event.getComponentId().split(":")[1];
-        int days        = Integer.parseInt(event.getValues().get(0));
+        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
+        if (profile == null) {
+            hook.editOriginalEmbeds(EmbedFactory.buildPlayerNotFound(nickname).build()).setComponents().queue();
+            return;
+        }
 
-        event.deferEdit().queue(hook -> CompletableFuture.runAsync(() -> {
-            FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-            if (profile == null) {
-                hook.editOriginal("").setEmbeds(EmbedFactory.buildPlayerNotFound(nickname).build()).setComponents().queue();
+        if (days == 0) {
+            Cs2Stats stats = parseStats(faceitClient.getPlayerStats(profile.id));
+            if (stats == null) {
+                hook.editOriginalEmbeds(EmbedFactory.buildStatsUnavailable(profile.nickname).build()).queue();
                 return;
             }
+            hook.editOriginalEmbeds(EmbedFactory.buildStats(profile.nickname, profile, stats).build())
+                    .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(profile.nickname))).queue();
+            return;
+        }
+        if (!PeriodStatsService.ALLOWED_DAYS.contains(days)) return;
 
-            if (days == 0) {
-                String rawJson = faceitClient.getPlayerStats(profile.id);
-                if (rawJson == null) return;
-                Cs2Stats stats = gson.fromJson(rawJson, Cs2Stats.class);
-                hook.editOriginalEmbeds(EmbedFactory.buildStats(nickname, profile, stats).build())
-                        .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(nickname))).queue();
-                return;
-            }
+        PeriodStats result = periodStats.aggregate(profile.id, days);
+        if (result == null) {
+            hook.editOriginalEmbeds(EmbedFactory.buildError("FACEIT didn't respond. Try again in a moment.").build())
+                    .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(profile.nickname))).queue();
+            return;
+        }
+        if (result.maps() == 0) {
+            hook.editOriginalEmbeds(EmbedFactory.buildError(
+                    "No CS2 matches found for " + profile.nickname + " in the last " + days + " days.").build())
+                    .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(profile.nickname))).queue();
+            return;
+        }
 
-            long toUnix   = Instant.now().getEpochSecond();
-            long fromUnix = toUnix - (days * 86400L);
-
-            com.google.gson.JsonArray history =
-                    faceitClient.getPlayerMatchHistoryByDate(profile.id, fromUnix, toUnix);
-
-            if (history == null || history.isEmpty()) {
-                hook.editOriginal("").setEmbeds(EmbedFactory.buildStatsUnavailable(nickname).build()).setComponents().queue();
-                return;
-            }
-
-            int totalKills = 0, totalDeaths = 0, totalHs = 0, wins = 0, validMatches = 0;
-
-            for (com.google.gson.JsonElement el : history) {
-                String matchId = el.getAsJsonObject().get("match_id").getAsString();
-                com.google.gson.JsonObject matchStats = faceitClient.getMatchStats(matchId);
-
-                if (matchStats == null || !matchStats.has("rounds")) continue;
-
-                com.google.gson.JsonArray rounds = matchStats.getAsJsonArray("rounds");
-                if (rounds.isEmpty()) continue;
-
-                com.google.gson.JsonObject roundData = rounds.get(0).getAsJsonObject();
-                com.google.gson.JsonArray teams      = roundData.getAsJsonArray("teams");
-
-                boolean found = false;
-                for (com.google.gson.JsonElement teamEl : teams) {
-                    com.google.gson.JsonArray players = teamEl.getAsJsonObject().getAsJsonArray("players");
-
-                    for (com.google.gson.JsonElement playerEl : players) {
-                        com.google.gson.JsonObject p = playerEl.getAsJsonObject();
-                        if (!p.get("player_id").getAsString().equals(profile.id)) continue;
-
-                        com.google.gson.JsonObject pStats = p.getAsJsonObject("player_stats");
-                        try {
-                            totalKills  += Integer.parseInt(pStats.get("Kills").getAsString());
-                            totalDeaths += Integer.parseInt(pStats.get("Deaths").getAsString());
-                            totalHs     += Integer.parseInt(pStats.get("Headshots").getAsString());
-                            if ("1".equals(pStats.get("Result").getAsString())) wins++;
-                            validMatches++;
-                        } catch (Exception ignored) {}
-                        found = true;
-                        break;
-                    }
-                    if (found) break;
-                }
-            }
-
-            if (validMatches == 0) {
-                hook.editOriginal("").setEmbeds(EmbedFactory.buildStatsUnavailable(nickname).build()).setComponents().queue();
-                return;
-            }
-
-            double avgKd = totalDeaths > 0 ? (double) totalKills / totalDeaths : totalKills;
-            double avgHs = totalKills  > 0 ? ((double) totalHs / totalKills) * 100 : 0;
-
-            hook.editOriginalEmbeds(
-                    EmbedFactory.buildPeriodResult(nickname, profile.avatarUrl,
-                            days, validMatches, wins, totalKills, avgKd, avgHs).build()
-            ).setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(nickname))).queue();
-        }));
+        hook.editOriginalEmbeds(EmbedFactory.buildPeriodResult(profile.nickname, profile.avatarUrl, result).build())
+                .setComponents(ActionRow.of(EmbedFactory.buildPeriodMenu(profile.nickname))).queue();
     }
 
     private void sendError(MessageReceivedEvent event, String nickname) {

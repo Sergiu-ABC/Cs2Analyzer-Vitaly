@@ -1,194 +1,185 @@
 package org.example;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
 import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.HttpStatus;
+import io.javalin.json.JavalinGson;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.Semaphore;
+import java.util.regex.Pattern;
 
+/*
+  REST API + single-page dashboard. Shares its FACEIT client, cache, database and
+  period aggregator with the Discord bot (all injected from Main).
+ */
 public class WebDashboard {
 
-    private final FaceitApiClient faceitClient = new FaceitApiClient();
-    private final RoleAnalyzer analyzer        = new RoleAnalyzer();
-    private final Data_Model db                = new Data_Model();
-    private final Gson gson                    = new Gson();
+    // FACEIT nicknames: letters, digits, '-' and '_' (3-12 chars today; allow some slack).
+    private static final Pattern NICKNAME = Pattern.compile("[A-Za-z0-9_\\-]{2,32}");
 
-    public void startServer(int port) {
-        Javalin app = Javalin.create().start(port);
-        System.out.println("Vitaly Web Engine ONLINE: http://localhost:" + port);
+    private final FaceitApiClient faceitClient;
+    private final RoleAnalyzer analyzer;
+    private final PlayerRepository db;
+    private final PeriodStatsService periodStats;
+    private final Gson gson;
+    private final boolean trustProxy;
 
-        app.get("/", ctx -> ctx.html(DashboardHtml.getLayout()));
+    private final RateLimiter playerLimiter = new RateLimiter(20, 60_000);
+    private final Semaphore periodSlots = new Semaphore(3); // concurrent period aggregations
 
-        app.get("/api/leaderboard", ctx -> ctx.json(db.getTopPlayers(15)));
-
-        app.get("/api/player/{nickname}", ctx -> {
-            String nickname = ctx.pathParam("nickname");
-            String daysParam = ctx.queryParam("days");
-            int days = (daysParam != null && !daysParam.isEmpty()) ? Integer.parseInt(daysParam) : 0;
-
-            FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
-
-            if (profile == null) {
-                ctx.json(Map.of("success", false, "error", "Player not found."));
-                return;
-            }
-
-            Cs2Stats finalStats;
-
-            if (days == 0) {
-                String rawJson = faceitClient.getPlayerStats(profile.id);
-                if (rawJson == null) {
-                    ctx.json(Map.of("success", false, "error", "Stats unavailable."));
-                    return;
-                }
-                finalStats = gson.fromJson(rawJson, Cs2Stats.class);
-            }
-
-            else {
-                long toUnix = System.currentTimeMillis() / 1000L;
-                long fromUnix = toUnix - (days * 86400L);
-
-                com.google.gson.JsonArray history = faceitClient.getPlayerMatchHistoryByDate(profile.id, fromUnix, toUnix);
-
-                if (history == null || history.isEmpty()) {
-                    ctx.json(Map.of("success", false, "error", "No matches found in the last " + days + " days."));
-                    return;
-                }
-
-
-                AtomicInteger totalKills = new AtomicInteger(0);
-                AtomicInteger totalDeaths = new AtomicInteger(0);
-                AtomicInteger totalHs = new AtomicInteger(0);
-                AtomicInteger wins = new AtomicInteger(0);
-                AtomicInteger validMatches = new AtomicInteger(0);
-                AtomicInteger totalMvps = new AtomicInteger(0);
-                AtomicInteger total3k = new AtomicInteger(0);
-                AtomicInteger total4k = new AtomicInteger(0);
-                AtomicInteger total5k = new AtomicInteger(0);
-                AtomicReference<Double> totalAdr = new AtomicReference<>(0.0);
-
-
-                List<String> matchIds = new ArrayList<>();
-                for (com.google.gson.JsonElement el : history) {
-                    matchIds.add(el.getAsJsonObject().get("match_id").getAsString());
-                }
-
-
-                matchIds.parallelStream().forEach(matchId -> {
-                    com.google.gson.JsonObject matchStats = faceitClient.getMatchStats(matchId);
-                    if (matchStats == null || !matchStats.has("rounds")) return;
-
-                    com.google.gson.JsonArray rounds = matchStats.getAsJsonArray("rounds");
-                    if (rounds.isEmpty()) return;
-
-                    com.google.gson.JsonObject roundData = rounds.get(0).getAsJsonObject();
-                    com.google.gson.JsonArray teams = roundData.getAsJsonArray("teams");
-
-                    for (com.google.gson.JsonElement teamEl : teams) {
-                        com.google.gson.JsonArray players = teamEl.getAsJsonObject().getAsJsonArray("players");
-                        boolean foundPlayerInTeam = false;
-
-                        for (com.google.gson.JsonElement playerEl : players) {
-                            com.google.gson.JsonObject p = playerEl.getAsJsonObject();
-                            if (!p.get("player_id").getAsString().equals(profile.id)) continue;
-
-                            com.google.gson.JsonObject pStats = p.getAsJsonObject("player_stats");
-                            try {
-                                totalKills.addAndGet(Integer.parseInt(pStats.get("Kills").getAsString()));
-                                totalDeaths.addAndGet(Integer.parseInt(pStats.get("Deaths").getAsString()));
-                                totalHs.addAndGet(Integer.parseInt(pStats.get("Headshots").getAsString()));
-                                if (pStats.has("MVPs")) totalMvps.addAndGet(Integer.parseInt(pStats.get("MVPs").getAsString()));
-                                if (pStats.has("Triple Kills")) total3k.addAndGet(Integer.parseInt(pStats.get("Triple Kills").getAsString()));
-                                if (pStats.has("Quadro Kills")) total4k.addAndGet(Integer.parseInt(pStats.get("Quadro Kills").getAsString()));
-                                if (pStats.has("Penta Kills")) total5k.addAndGet(Integer.parseInt(pStats.get("Penta Kills").getAsString()));
-                                if (pStats.has("ADR")) {
-                                    double adr = Double.parseDouble(pStats.get("ADR").getAsString());
-                                    totalAdr.accumulateAndGet(adr, Double::sum);
-                                }
-
-                                if ("1".equals(pStats.get("Result").getAsString())) wins.incrementAndGet();
-                                validMatches.incrementAndGet();
-                            } catch (Exception ignored) {}
-
-                            foundPlayerInTeam = true;
-                            break;
-                        }
-                        if (foundPlayerInTeam) break;
-                    }
-                });
-
-                if (validMatches.get() == 0) {
-                    ctx.json(Map.of("success", false, "error", "Could not parse match scoreboards."));
-                    return;
-                }
-
-
-                int matches = validMatches.get();
-                double avgKd = totalDeaths.get() > 0 ? (double) totalKills.get() / totalDeaths.get() : totalKills.get();
-                double avgHs = totalKills.get() > 0 ? ((double) totalHs.get() / totalKills.get()) * 100 : 0;
-                double winRate = ((double) wins.get() / matches) * 100;
-                double avgAdr = totalAdr.get() > 0 ? (totalAdr.get() / matches) : 0;
-
-
-                com.google.gson.JsonObject syntheticRoot = new com.google.gson.JsonObject();
-                com.google.gson.JsonObject lifetime = new com.google.gson.JsonObject();
-
-                lifetime.addProperty("Matches", String.valueOf(matches));
-                lifetime.addProperty("Wins", String.valueOf(wins.get()));
-                lifetime.addProperty("Win Rate %", String.format("%.2f", winRate));
-                lifetime.addProperty("Average K/D Ratio", String.format("%.2f", avgKd));
-                lifetime.addProperty("Average Headshots %", String.format("%.2f", avgHs));
-                lifetime.addProperty("Kills", String.valueOf(totalKills.get()));
-                lifetime.addProperty("Headshots", String.valueOf(totalHs.get()));
-                lifetime.addProperty("MVPs", String.valueOf(totalMvps.get()));
-                lifetime.addProperty("Triple Kills", String.valueOf(total3k.get()));
-                lifetime.addProperty("Quadro Kills", String.valueOf(total4k.get()));
-                lifetime.addProperty("Penta Kills", String.valueOf(total5k.get()));
-                if (avgAdr > 0) lifetime.addProperty("ADR", String.format("%.2f", avgAdr));
-
-                syntheticRoot.add("lifetime", lifetime);
-                finalStats = gson.fromJson(syntheticRoot.toString(), Cs2Stats.class);
-            }
-
-
-            String roleResult = analyzer.determineRole(finalStats);
-            db.savePlayer(nickname, profile.elo, finalStats.getKd(), finalStats.getWinRate());
-
-            Map<String, Object> resp = buildPlayerResponse(nickname, profile, finalStats, roleResult);
-            ctx.json(resp);
-        });
+    public WebDashboard(FaceitApiClient faceitClient, RoleAnalyzer analyzer, PlayerRepository db,
+                        PeriodStatsService periodStats, Gson gson, boolean trustProxy) {
+        this.faceitClient = faceitClient;
+        this.analyzer = analyzer;
+        this.db = db;
+        this.periodStats = periodStats;
+        this.gson = gson;
+        this.trustProxy = trustProxy;
     }
 
-    private Map<String, Object> buildPlayerResponse(String nickname, FaceitProfile profile,
-                                                    Cs2Stats stats, String roleResult) {
+    public Javalin startServer(int port) {
+        Javalin app = Javalin.create(cfg -> cfg.jsonMapper(new JavalinGson(gson, false)));
+
+        app.get("/", ctx -> ctx.html(DashboardHtml.getLayout()));
+        app.get("/health", ctx -> ctx.result("ok"));
+        app.get("/api/leaderboard", ctx -> ctx.json(db.getTopPlayers(15)));
+        app.get("/api/player/{nickname}", this::handlePlayer);
+
+        app.exception(Exception.class, (e, ctx) -> {
+            e.printStackTrace();
+            error(ctx, HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected server error.");
+        });
+
+        app.start(port);
+        System.out.println("Vitaly Web Engine ONLINE: http://localhost:" + app.port());
+        return app;
+    }
+
+    private void handlePlayer(Context ctx) {
+        String nickname = ctx.pathParam("nickname");
+        if (!NICKNAME.matcher(nickname).matches()) {
+            error(ctx, HttpStatus.BAD_REQUEST, "Invalid nickname.");
+            return;
+        }
+
+        int days;
+        try {
+            String daysParam = ctx.queryParam("days");
+            days = (daysParam == null || daysParam.isEmpty()) ? 0 : Integer.parseInt(daysParam);
+        } catch (NumberFormatException e) {
+            days = -1;
+        }
+        if (days != 0 && !PeriodStatsService.ALLOWED_DAYS.contains(days)) {
+            error(ctx, HttpStatus.BAD_REQUEST, "days must be one of 0, 30, 90, 180, 365.");
+            return;
+        }
+
+        if (!playerLimiter.tryAcquire(clientKey(ctx))) {
+            error(ctx, HttpStatus.TOO_MANY_REQUESTS, "Too many lookups. Wait a minute and try again.");
+            return;
+        }
+
+        FaceitProfile profile = faceitClient.getPlayerProfile(nickname);
+        if (profile == null) {
+            error(ctx, HttpStatus.NOT_FOUND, "Player not found.");
+            return;
+        }
+
+        // Lifetime stats are always needed: the role and the entry/clutch/utility numbers
+        // only exist as lifetime aggregates on FACEIT.
+        Cs2Stats lifetime = parseStats(faceitClient.getPlayerStats(profile.id));
+        if (lifetime == null) {
+            error(ctx, HttpStatus.BAD_GATEWAY, "Stats unavailable.");
+            return;
+        }
+
+        Cs2Stats shown = lifetime;
+        PeriodStats period = null;
+        if (days > 0) {
+            if (!periodSlots.tryAcquire()) {
+                error(ctx, HttpStatus.SERVICE_UNAVAILABLE, "Server busy. Try again in a few seconds.");
+                return;
+            }
+            try {
+                period = periodStats.aggregate(profile.id, days);
+            } finally {
+                periodSlots.release();
+            }
+            if (period == null) {
+                error(ctx, HttpStatus.BAD_GATEWAY, "FACEIT didn't respond. Try again in a moment.");
+                return;
+            }
+            if (period.maps() == 0) {
+                error(ctx, HttpStatus.NOT_FOUND, "No matches found in the last " + days + " days.");
+                return;
+            }
+            shown = period.toCs2Stats();
+        } else {
+            // Only lifetime numbers go on the leaderboard; a hot 30-day streak shouldn't overwrite them.
+            db.savePlayer(profile.nickname, profile.elo, lifetime.getKd(), lifetime.getWinRate());
+        }
+
+        String roleResult = analyzer.determineRole(lifetime);
+        ctx.json(buildPlayerResponse(profile, shown, lifetime, roleResult, days, period));
+    }
+
+    private Cs2Stats parseStats(String rawJson) {
+        if (rawJson == null) return null;
+        try {
+            return gson.fromJson(rawJson, Cs2Stats.class);
+        } catch (JsonParseException e) {
+            return null;
+        }
+    }
+
+    private String clientKey(Context ctx) {
+        if (trustProxy) {
+            String forwarded = ctx.header("X-Forwarded-For");
+            if (forwarded != null && !forwarded.isBlank()) return forwarded.split(",")[0].trim();
+        }
+        return ctx.ip();
+    }
+
+    private static void error(Context ctx, HttpStatus status, String message) {
+        ctx.status(status).json(Map.of("success", false, "error", message));
+    }
+
+    private Map<String, Object> buildPlayerResponse(FaceitProfile profile, Cs2Stats stats, Cs2Stats lifetime,
+                                                    String roleResult, int days, PeriodStats period) {
         Map<String, Object> resp = new HashMap<>();
 
         resp.put("success",  true);
-        resp.put("nickname", nickname);
+        resp.put("nickname", profile.nickname);
         resp.put("elo",      profile.elo);
         resp.put("level",    profile.level);
         resp.put("avatar",   profile.avatarUrl);
         resp.put("role",     roleResult);
+        resp.put("days",     days);
+        resp.put("truncated", period != null && period.truncated());
 
         resp.put("kd",        stats.getKd());
         resp.put("adr",       stats.getAdr());
         resp.put("hs",        stats.getHs());
         resp.put("winRate",   stats.getWinRate());
-        resp.put("entry",     Math.round(stats.getEntrySuccess()  * 100));
-        resp.put("clutch1v1", Math.round(stats.getClutch1v1()     * 100));
-        resp.put("clutch1v2", Math.round(stats.getClutch1v2()     * 100));
-        resp.put("sniper",    stats.getSniperRate());
-        resp.put("utility",   stats.getUtilityDmg());
-        resp.put("flashes",   stats.getFlashesPerRound());
         resp.put("matches",   stats.getMatches());
 
+        // Lifetime-only metrics (FACEIT doesn't expose them per match)
+        resp.put("entry",     Math.round(lifetime.getEntrySuccess() * 100));
+        resp.put("clutch1v1", Math.round(lifetime.getClutch1v1()    * 100));
+        resp.put("clutch1v2", Math.round(lifetime.getClutch1v2()    * 100));
+        resp.put("sniper",    lifetime.getSniperRate());
+        resp.put("utility",   lifetime.getUtilityDmg());
+        resp.put("flashes",   lifetime.getFlashesPerRound());
+
         resp.put("wins",       stats.getTotalWins());
-        resp.put("streak",     stats.getCurrentWinStreak());
-        resp.put("bestStreak", stats.getLongestWinStreak());
+        resp.put("streak",     lifetime.getCurrentWinStreak());
+        resp.put("bestStreak", lifetime.getLongestWinStreak());
         resp.put("avgKills",   stats.getAvgKills());
         resp.put("aces",       stats.getAces());
         resp.put("quads",      stats.getQuadKills());
@@ -198,9 +189,9 @@ public class WebDashboard {
         resp.put("mvps",       stats.getMvps());
 
         List<Map<String, Object>> mapData = new ArrayList<>();
-        if (stats.segments != null) {
+        if (lifetime.segments != null) {
             List<Cs2Stats.Segment> validMaps = new ArrayList<>();
-            for (Cs2Stats.Segment s : stats.segments) {
+            for (Cs2Stats.Segment s : lifetime.segments) {
                 if (s.getMatches() >= 5) validMaps.add(s);
             }
             validMaps.sort((a, b) -> Double.compare(b.getWinRate(), a.getWinRate()));
