@@ -3,7 +3,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 public class RoleAnalyzer {
-    private static class Role implements Comparable<Role> {
+    static class Role implements Comparable<Role> {
         String name;
         String emoji;
         String description;
@@ -22,11 +22,29 @@ public class RoleAnalyzer {
         }
     }
 
+    // 0-100: how close `actual` gets to `target` (higher is better)
     private double calc(double actual, double target) {
-        return Math.min(100.0, (actual / target) * 100.0);
+        return Math.max(0.0, Math.min(100.0, (actual / target) * 100.0));
+    }
+
+    /*
+      0-100: how far `actual` sits below `threshold`, where falling `fullScoreGap` units short
+      scores 100. The gap is expressed in the stat's own unit (percentage points for win rate,
+      damage for ADR, ratio for K/D), so every penalty term lands on the same 0-100 scale.
+      The previous version multiplied every gap by 100, which is right for ratios like K/D
+      but turned a 5-point ADR gap into 250 points and made "Passive / Baiter" win for
+      almost every average player.
+     */
+    private double below(double actual, double threshold, double fullScoreGap) {
+        return Math.max(0.0, Math.min(100.0, (threshold - actual) / fullScoreGap * 100.0));
     }
 
     public String determineRole(Cs2Stats stats) {
+        return describe(rank(stats));
+    }
+
+    // Package-private so tests can assert on the ranking, not just the formatted text.
+    List<Role> rank(Cs2Stats stats) {
         double kd = stats.getKd();
         double adr = stats.getAdr();
         double hs = stats.getHs();
@@ -45,14 +63,14 @@ public class RoleAnalyzer {
         roles.add(new Role("Supportive AWPer", "🔭", "You hold the flank and throw utility while sniping from afar.", (calc(sniper, 0.20) * 0.5) + (calc(flashes, 0.6) * 0.5)));
         roles.add(new Role("Hybrid AWPer", "🔫", "Comfortable with a rifle, but lethal when someone drops you the AWP.", (calc(sniper, 0.15) * 0.5) + (calc(adr, 80) * 0.5)));
         roles.add(new Role("Aggressive Entry", "💣", "First one in. You crack open bomb sites and create space.", (calc(entry, 0.55) * 0.5) + (calc(adr, 90) * 0.5)));
-        roles.add(new Role("Space Creator", "🚀", "You run in first, take the bullets, and let your team trade you.", (calc(entry, 0.50) * 0.6) + Math.max(0, (1.1 - kd) * 100 * 0.4)));
+        roles.add(new Role("Space Creator", "🚀", "You run in first, take the bullets, and let your team trade you.", (calc(entry, 0.50) * 0.6) + below(kd, 1.1, 1.0) * 0.4));
         roles.add(new Role("First Blood Specialist", "🩸", "You always find the opening duel of the round, and you usually win it.", calc(entry, 0.60)));
-        roles.add(new Role("Glass Cannon", "💥", "Massive damage, but you die a lot. High risk, high reward.", (calc(adr, 95) * 0.6) + Math.max(0, (1.0 - kd) * 100 * 0.4)));
+        roles.add(new Role("Glass Cannon", "💥", "Massive damage, but you die a lot. High risk, high reward.", (calc(adr, 95) * 0.6) + below(kd, 1.0, 1.0) * 0.4));
         roles.add(new Role("Trade Fragger", "🔄", "The reliable second-man-in. You clean up the kills after the entry dies.", (calc(kd, 1.15) * 0.5) + (calc(adr, 85) * 0.5)));
         roles.add(new Role("Headshot Machine", "🤖", "Pure mechanical skill. You click heads faster than they can react.", calc(hs, 65.0)));
         roles.add(new Role("The Technician", "⚙️", "Perfect aim combined with perfect utility usage.", (calc(hs, 55.0) * 0.5) + (calc(util, 25) * 0.5)));
-        roles.add(new Role("Site Anchor", "⚓", "Immovable object. You hold the site alone while teammates rotate.", (calc(kd, 1.1) * 0.4) + (calc(win, 53) * 0.3) + Math.max(0, (0.4 - entry) * 100 * 0.3)));
-        roles.add(new Role("Lurker", "🐍", "Sneaky and isolated. You cut off rotations and hit them in the back.", (calc(kd, 1.15) * 0.6) + Math.max(0, (0.4 - entry) * 100 * 0.4)));
+        roles.add(new Role("Site Anchor", "⚓", "Immovable object. You hold the site alone while teammates rotate.", (calc(kd, 1.1) * 0.4) + (calc(win, 53) * 0.3) + below(entry, 0.4, 1.0) * 0.3));
+        roles.add(new Role("Lurker", "🐍", "Sneaky and isolated. You cut off rotations and hit them in the back.", (calc(kd, 1.15) * 0.6) + below(entry, 0.4, 1.0) * 0.4));
         roles.add(new Role("Clutch Minister", "🧊", "Ice in your veins. The round isn't over if you are still alive.", (calc(clutch1v1, 0.65) * 0.5) + (calc(clutch1v2, 0.25) * 0.5)));
         roles.add(new Role("The Closer", "🚪", "You clean up the mess. High clutch rate and solid survival.", (calc(clutch1v1, 0.60) * 0.5) + (calc(kd, 1.2) * 0.5)));
         roles.add(new Role("Retake Specialist", "🏰", "You thrive when the bomb is down and you have to retake the site.", (calc(clutch1v2, 0.20) * 0.5) + (calc(util, 25) * 0.5)));
@@ -67,17 +85,20 @@ public class RoleAnalyzer {
         roles.add(new Role("Seasoned Veteran", "👴", "You have seen it all. You win through sheer thousands of hours of experience.", calc(matches, 4000)));
 
 
-        roles.add(new Role("Stat Padder", "📈", "You have great stats, but your win rate is surprisingly low. Empty calories.", (calc(kd, 1.2) * 0.6) + Math.max(0, (48 - win) * 100 * 0.4)));
-        roles.add(new Role("Passive / Baiter", "🎣", "You survive a lot, but you let your teammates do the hard work.", (calc(kd, 1.15) * 0.5) + Math.max(0, (75 - adr) * 100 * 0.5)));
-        roles.add(new Role("Eco Farmer", "🌾", "High K/D, lower ADR. You only get kills when the enemy has pistols.", (calc(kd, 1.2) * 0.6) + Math.max(0, (70 - adr) * 100 * 0.4)));
-        roles.add(new Role("The Pacifist", "🕊️", "You barely do damage, but somehow your team wins. The ultimate good luck charm.", (calc(win, 54) * 0.5) + Math.max(0, (65 - adr) * 100 * 0.5)));
-        roles.add(new Role("Cannon Fodder", "💀", "You run in, miss your shots, and die instantly.", Math.max(0, (0.9 - kd) * 100 * 0.5) + Math.max(0, (0.4 - entry) * 100 * 0.5)));
-        roles.add(new Role("New Blood", "🌱", "You are just getting started on your FACEIT journey.", Math.max(0, (300 - matches) / 300.0 * 100)));
+        roles.add(new Role("Stat Padder", "📈", "You have great stats, but your win rate is surprisingly low. Empty calories.", (calc(kd, 1.2) * 0.6) + below(win, 48, 10) * 0.4));
+        roles.add(new Role("Passive / Baiter", "🎣", "You survive a lot, but you let your teammates do the hard work.", (calc(kd, 1.15) * 0.5) + below(adr, 75, 25) * 0.5));
+        roles.add(new Role("Eco Farmer", "🌾", "High K/D, lower ADR. You only get kills when the enemy has pistols.", (calc(kd, 1.2) * 0.6) + below(adr, 70, 25) * 0.4));
+        roles.add(new Role("The Pacifist", "🕊️", "You barely do damage, but somehow your team wins. The ultimate good luck charm.", (calc(win, 54) * 0.5) + below(adr, 65, 25) * 0.5));
+        roles.add(new Role("Cannon Fodder", "💀", "You run in, miss your shots, and die instantly.", below(kd, 0.9, 1.0) * 0.5 + below(entry, 0.4, 1.0) * 0.5));
+        roles.add(new Role("New Blood", "🌱", "You are just getting started on your FACEIT journey.", below(matches, 300, 300)));
 
         roles.add(new Role("Versatile Flex", "🧩", "The glue of the team. You can pick up any gun and play any position.", (calc(kd, 1.05) * 0.25) + (calc(adr, 75) * 0.25) + (calc(win, 50) * 0.25) + (calc(hs, 50) * 0.25)));
 
         Collections.sort(roles);
+        return roles;
+    }
 
+    private String describe(List<Role> roles) {
         Role top1 = roles.get(0);
         Role top2 = roles.get(1);
         Role top3 = roles.get(2);

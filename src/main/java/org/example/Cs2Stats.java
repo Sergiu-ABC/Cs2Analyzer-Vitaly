@@ -12,6 +12,14 @@ public class Cs2Stats {
     @SerializedName("segments")
     public List<Segment> segments;
 
+    // Used by Gson
+    public Cs2Stats() {}
+
+    // Used for stats built locally (time-window aggregates)
+    public Cs2Stats(Map<String, Object> lifetime) {
+        this.lifetime = lifetime;
+    }
+
     private double parse(String key) {
         if (lifetime == null || !lifetime.containsKey(key)) return 0.0;
         try {
@@ -105,8 +113,9 @@ public class Cs2Stats {
             try { return Double.parseDouble(stats.get("Average K/D Ratio")); } catch(Exception e){return 0;}
         }
         public String getCleanName() {
-            if (label == null) return "Unknown";
+            if (label == null || label.isBlank()) return "Unknown";
             String clean = label.replace("de_", "");
+            if (clean.isEmpty()) return label;
             return clean.substring(0, 1).toUpperCase() + clean.substring(1);
         }
     }

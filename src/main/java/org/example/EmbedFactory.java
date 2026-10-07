@@ -1,6 +1,7 @@
 package org.example;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.utils.MarkdownSanitizer;
 import java.awt.Color;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -15,7 +16,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(EmbedUtils.levelColor(profile.level));
         embed.setAuthor("📊 Combat Dashboard — " + nickname,
-                "https://www.faceit.com/en/players/" + nickname, null);
+                profileUrl(nickname), null);
         embed.setTitle(EmbedUtils.levelBadge(profile.level) + " • " + profile.elo + " ELO");
 
         if (profile.avatarUrl != null && !profile.avatarUrl.isEmpty())
@@ -49,7 +50,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(EmbedUtils.levelColor(profile.level));
         embed.setAuthor("🎯 Role Analysis — " + nickname,
-                "https://www.faceit.com/en/players/" + nickname, null);
+                profileUrl(nickname), null);
         embed.setTitle(EmbedUtils.levelBadge(profile.level) + " • " + profile.elo + " ELO");
 
         if (profile.avatarUrl != null && !profile.avatarUrl.isEmpty())
@@ -93,7 +94,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(138, 43, 226));
         embed.setAuthor("🔬 Deep Career Scan — " + nickname,
-                "https://www.faceit.com/en/players/" + nickname, null);
+                profileUrl(nickname), null);
         embed.setTitle(EmbedUtils.levelBadge(profile.level) + " • " + profile.elo + " ELO");
 
         if (profile.avatarUrl != null && !profile.avatarUrl.isEmpty())
@@ -126,7 +127,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(0, 200, 100));
         embed.setAuthor("🗺️ Map Mastery — " + nickname,
-                "https://www.faceit.com/en/players/" + nickname, null);
+                profileUrl(nickname), null);
 
         if (profile.avatarUrl != null && !profile.avatarUrl.isEmpty())
             embed.setThumbnail(profile.avatarUrl);
@@ -145,15 +146,19 @@ public class EmbedFactory {
                             "**Matches:** " + best2.getMatches(), true);
         }
 
-        embed.addField("​", "━━━━━━━━━━━━━━━━━━━━", false);
+        // With a single map, "best" and "auto-veto" would be the same card.
+        if (validMaps.size() > 1) {
+            embed.addField("​", "━━━━━━━━━━━━━━━━━━━━", false);
 
-        Cs2Stats.Segment worst1 = validMaps.get(validMaps.size() - 1);
-        embed.addField("🗑️ Auto-Veto: " + worst1.getCleanName(),
-                "**Win Rate:** " + worst1.getWinRate() + "%\n" +
-                        "**K/D Ratio:** " + worst1.getKd() + "\n" +
-                        "**Matches:** " + worst1.getMatches(), true);
+            Cs2Stats.Segment worst1 = validMaps.get(validMaps.size() - 1);
+            embed.addField("🗑️ Auto-Veto: " + worst1.getCleanName(),
+                    "**Win Rate:** " + worst1.getWinRate() + "%\n" +
+                            "**K/D Ratio:** " + worst1.getKd() + "\n" +
+                            "**Matches:** " + worst1.getMatches(), true);
+        }
 
-        if (validMaps.size() > 2) {
+        // Only show a "weak link" that isn't already shown as a best map.
+        if (validMaps.size() > 3) {
             Cs2Stats.Segment worst2 = validMaps.get(validMaps.size() - 2);
             embed.addField("⚠️ Weak Link: " + worst2.getCleanName(),
                     "**Win Rate:** " + worst2.getWinRate() + "%\n" +
@@ -275,24 +280,24 @@ public class EmbedFactory {
     }
 
 
-    public static EmbedBuilder buildLeaderboard(java.util.List<Data_Model.PlayerRecord> topPlayers) {
+    public static EmbedBuilder buildLeaderboard(java.util.List<PlayerRepository.PlayerRecord> topPlayers) {
         EmbedBuilder embed = new EmbedBuilder();
-        embed.setTitle("🏆 Server ELO Leaderboard");
+        embed.setTitle("🏆 Vitaly ELO Leaderboard");
         embed.setColor(new Color(255, 215, 0));
 
         StringBuilder board = new StringBuilder();
         int rank = 1;
-        for (Data_Model.PlayerRecord p : topPlayers) {
+        for (PlayerRepository.PlayerRecord p : topPlayers) {
             String medal = switch (rank) {
                 case 1  -> "🥇";
                 case 2  -> "🥈";
                 case 3  -> "🥉";
                 default -> "🔹";
             };
-            board.append(medal).append(" **").append(p.nickname).append("**\n")
-                    .append("└ **ELO:** ").append(p.elo)
-                    .append(" | **K/D:** ").append(p.kd)
-                    .append(" | **Win:** ").append(p.winRate).append("%\n\n");
+            board.append(medal).append(" **").append(MarkdownSanitizer.escape(p.nickname())).append("**\n")
+                    .append("└ **ELO:** ").append(p.elo())
+                    .append(" | **K/D:** ").append(String.format("%.2f", p.kd()))
+                    .append(" | **Win:** ").append(String.format("%.0f", p.winRate())).append("%\n\n");
             rank++;
         }
 
@@ -302,26 +307,41 @@ public class EmbedFactory {
     }
 
 
-    public static EmbedBuilder buildPeriodResult(String nickname, String avatarUrl,
-                                                 int days, int validMatches,
-                                                 int wins, int totalKills,
-                                                 double avgKd, double avgHs) {
-        int winRate = (int) Math.round(((double) wins / validMatches) * 100);
-
+    public static EmbedBuilder buildPeriodResult(String nickname, String avatarUrl, PeriodStats p) {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(0, 255, 128));
-        embed.setAuthor("🕒 " + days + "-Day Performance — " + nickname, null, avatarUrl);
-        embed.setTitle("Aggregated over " + validMatches + " Matches");
+        embed.setAuthor("🕒 " + p.days() + "-Day Performance — " + nickname, profileUrl(nickname), avatarUrl);
+        embed.setTitle("Aggregated over " + p.maps() + " maps"
+                + (p.truncated() ? " (latest " + PeriodStatsService.MAX_MATCHES + " matches)" : ""));
         embed.addField("📊 Period Stats",
                 "```yaml\n" +
-                        " Win Rate : " + winRate + "% (" + wins + "W - " + (validMatches - wins) + "L)\n" +
-                        " K/D Ratio: " + String.format("%.2f", avgKd) + "\n" +
-                        " HS %     : " + String.format("%.1f", avgHs) + "%\n" +
-                        " Avg Kills: " + String.format("%.1f", (double) totalKills / validMatches) + "\n" +
+                        " Win Rate : " + Math.round(p.winRate()) + "% (" + p.wins() + "W - " + (p.maps() - p.wins()) + "L)\n" +
+                        " K/D Ratio: " + String.format("%.2f", p.kd()) + "\n" +
+                        " ADR      : " + (p.adrMaps() > 0 ? String.format("%.1f", p.avgAdr()) : "n/a") + "\n" +
+                        " HS %     : " + String.format("%.1f", p.hsPercent()) + "%\n" +
+                        " Avg Kills: " + String.format("%.1f", p.avgKills()) + "\n" +
                         "```", false);
         embed.setFooter("Vitaly • Custom Match Aggregator", null);
         embed.setTimestamp(Instant.now());
         return embed;
+    }
+
+    public static EmbedBuilder buildPeriodPrompt(String nickname) {
+        return new EmbedBuilder()
+                .setColor(new Color(0, 255, 128))
+                .setTitle("📅 Pick a time window for " + MarkdownSanitizer.escape(nickname))
+                .setDescription("Choose a period from the menu below.");
+    }
+
+    public static EmbedBuilder buildError(String message) {
+        return new EmbedBuilder()
+                .setColor(new Color(220, 50, 50))
+                .setTitle("❌ Something went wrong")
+                .setDescription(message);
+    }
+
+    static String profileUrl(String nickname) {
+        return "https://www.faceit.com/en/players/" + FaceitApiClient.encode(nickname);
     }
 
 
@@ -329,7 +349,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(220, 50, 50));
         embed.setTitle("❌ Player Not Found");
-        embed.setDescription("Could not find **" + nickname + "** on FACEIT.");
+        embed.setDescription("Could not find **" + MarkdownSanitizer.escape(nickname) + "** on FACEIT.");
         return embed;
     }
 
@@ -337,7 +357,7 @@ public class EmbedFactory {
         EmbedBuilder embed = new EmbedBuilder();
         embed.setColor(new Color(220, 50, 50));
         embed.setTitle("❌ Stats Unavailable");
-        embed.setDescription("Found **" + nickname + "** but couldn't retrieve their CS2 stats.");
+        embed.setDescription("Found **" + MarkdownSanitizer.escape(nickname) + "** but couldn't retrieve their CS2 stats.");
         return embed;
     }
 }

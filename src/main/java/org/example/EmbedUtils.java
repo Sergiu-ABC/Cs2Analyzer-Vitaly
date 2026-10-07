@@ -40,10 +40,14 @@ public class EmbedUtils {
     }
 
     public static String crown(double thisVal, double otherVal, boolean isPercentage) {
-        String suffix = isPercentage ? "%" : "";
-        if (thisVal > otherVal) return "👑 **" + thisVal + suffix + "**";
-        if (thisVal == otherVal) return "🤝 **" + thisVal + suffix + "**";
-        return thisVal + suffix;
+        // Format first so 1.2300000001 vs 1.23 counts as a tie and prints cleanly.
+        String text = (thisVal == Math.rint(thisVal) ? String.valueOf((long) thisVal) : String.format("%.2f", thisVal))
+                + (isPercentage ? "%" : "");
+        double a = Math.round(thisVal * 100) / 100.0;
+        double b = Math.round(otherVal * 100) / 100.0;
+        if (a > b) return "👑 **" + text + "**";
+        if (a == b) return "🤝 **" + text + "**";
+        return text;
     }
 
     public static String getBannerForRole(String roleResult) {

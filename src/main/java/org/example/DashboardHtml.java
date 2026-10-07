@@ -9,7 +9,7 @@ public class DashboardHtml {
 <head>
     <meta charset="UTF-8">
     <title>Vitaly | CS2 Intelligence</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -328,36 +328,49 @@ public class DashboardHtml {
                 return await res.json();
             } catch (e) { return { success: false, error: "Network Error" }; }
         }
-async function loadPlayer() {
-const name = document.getElementById('searchInput').value;
-const days = document.getElementById('timePeriod').value;\s
-if (!name) return;
-      document.getElementById('errorMsg').style.display = 'none';
-        // --- NEW UI LOCK ---
-          const btn = document.querySelector('.action-btn');
-                  const originalText = btn.innerText;
-         btn.innerText = "SCANNING...";
-        btn.disabled = true;
-         btn.style.opacity = "0.5";
-         btn.style.cursor = "not-allowed"; 
-const data = await fetchAPI('/api/player/' + name + '?days=' + days);
-                                                           
-btn.innerText = originalText;
-      btn.disabled = false;
+        // Everything that came from a user or from FACEIT is escaped before it touches innerHTML.
+        function esc(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function playerUrl(name, days) {
+            return '/api/player/' + encodeURIComponent(name.trim()) + (days ? '?days=' + encodeURIComponent(days) : '');
+        }
+
+        async function loadPlayer() {
+            const name = document.getElementById('searchInput').value.trim();
+            const days = document.getElementById('timePeriod').value;
+            if (!name) return;
+            document.getElementById('errorMsg').style.display = 'none';
+
+            // Lock the button so impatient double-clicks don't fire duplicate scans
+            const btn = document.querySelector('.action-btn');
+            const originalText = btn.innerText;
+            btn.innerText = "SCANNING...";
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            btn.style.cursor = "not-allowed";
+
+            const data = await fetchAPI(playerUrl(name, days));
+
+            btn.innerText = originalText;
+            btn.disabled = false;
             btn.style.opacity = "1";
-                 btn.style.cursor = "pointer";
-                
-         if (data.success) {
-                   currentData = data;
-            document.getElementById('dna-container').style.display = 'block';
-               populateTabs();
-           } else {
-           showError(data.error);
-                                                           }
-              }
+            btn.style.cursor = "pointer";
+
+            if (data.success) {
+                currentData = data;
+                document.getElementById('dna-container').style.display = 'block';
+                populateTabs();
+            } else {
+                showError(data.error || 'Something went wrong.');
+            }
+        }
 
         function formatDiscordText(text) {
-            return text.replace(/\\*\\*(.*?)\\*\\*/g, '<strong style="color: #ffcc00;">$1</strong>')
+            return esc(text).replace(/\\*\\*(.*?)\\*\\*/g, '<strong style="color: #ffcc00;">$1</strong>')
                        .replace(/\\n/g, '<br>');
         }
 
@@ -365,7 +378,7 @@ btn.innerText = originalText;
             if (!currentData) return;
             const d = currentData;
 
-            document.getElementById('p-avatar').src = d.avatar || 'https://via.placeholder.com/80';
+            document.getElementById('p-avatar').src = d.avatar || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2280%22 height=%2280%22%3E%3Crect width=%2280%22 height=%2280%22 fill=%22%23333%22/%3E%3C/svg%3E';
             document.getElementById('p-name').innerText = d.nickname;
             document.getElementById('p-level').innerText = d.level;
             document.getElementById('p-elo').innerText = d.elo;
@@ -378,6 +391,12 @@ btn.innerText = originalText;
             document.getElementById('valClutch').innerText = d.clutch1v1 + '%';
 
             document.getElementById('roleText').innerHTML = formatDiscordText(d.role);
+            if (d.days > 0) {
+                document.getElementById('roleText').innerHTML +=
+                    '<br><br><small style="opacity:.7">Role, entry, clutch and utility are lifetime numbers (FACEIT only publishes them as lifetime totals). '
+                    + 'K/D, ADR, HS% and win rate cover the last ' + d.days + ' days'
+                    + (d.truncated ? ', capped at the latest 100 matches' : '') + '.</small>';
+            }
 
             drawChart(d);
 
@@ -411,7 +430,7 @@ btn.innerText = originalText;
                     let icon = idx === 0 ? '👑' : (idx === d.maps.length - 1 ? '🗑️' : '🗺️');
                     mHtml += `
                         <div class="map-card ${cls}">
-                            <div><div class="stat-value" style="font-size:1.8rem;">${icon} ${m.name}</div><div class="stat-label">${m.matches} Matches</div></div>
+                            <div><div class="stat-value" style="font-size:1.8rem;">${icon} ${esc(m.name)}</div><div class="stat-label">${m.matches} Matches</div></div>
                             <div style="text-align:right;"><div class="stat-value" style="color:#fff;">${m.win}%</div><div class="stat-label">K/D: ${m.kd}</div></div>
                         </div>
                     `;
@@ -477,16 +496,17 @@ btn.innerText = originalText;
 
             document.getElementById('compare-container').innerHTML = '<h3 style="text-align:center;">Fetching Data...</h3>';
 
-            const [d1, d2] = await Promise.all([ fetchAPI('/api/player/' + n1), fetchAPI('/api/player/' + n2) ]);
+            const [d1, d2] = await Promise.all([ fetchAPI(playerUrl(n1)), fetchAPI(playerUrl(n2)) ]);
             if (!d1.success || !d2.success) {
-                document.getElementById('compare-container').innerHTML = '<h3 style="color:var(--accent); text-align:center;">Error fetching one or both players.</h3>';
+                const reason = !d1.success ? d1.error : d2.error;
+                document.getElementById('compare-container').innerHTML = '<h3 style="color:var(--accent); text-align:center;">' + esc(reason || 'Error fetching one or both players.') + '</h3>';
                 return;
             }
 
             let html = `
                 <div style="display:flex; justify-content:space-between; margin-bottom: 20px;">
-                    <div style="text-align:center; flex:1;"><h2 style="margin:0; color:var(--accent);">${d1.nickname}</h2><p style="margin:0; color:var(--text-muted);">Level ${d1.level} (${d1.elo})</p></div>
-                    <div style="text-align:center; flex:1;"><h2 style="margin:0; color:#00ccff;">${d2.nickname}</h2><p style="margin:0; color:var(--text-muted);">Level ${d2.level} (${d2.elo})</p></div>
+                    <div style="text-align:center; flex:1;"><h2 style="margin:0; color:var(--accent);">${esc(d1.nickname)}</h2><p style="margin:0; color:var(--text-muted);">Level ${d1.level} (${d1.elo})</p></div>
+                    <div style="text-align:center; flex:1;"><h2 style="margin:0; color:#00ccff;">${esc(d2.nickname)}</h2><p style="margin:0; color:var(--text-muted);">Level ${d2.level} (${d2.elo})</p></div>
                 </div>
                 <div class="cmp-table">
                     ${cmpRow('K/D Ratio', d1.kd, d2.kd, false)}
@@ -522,7 +542,7 @@ btn.innerText = originalText;
                 data.forEach((p, i) => {
                     let rCls = i === 0 ? 'rank-1' : (i === 1 ? 'rank-2' : (i === 2 ? 'rank-3' : ''));
                     let icon = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : (i+1)));
-                    html += `<tr><td class="${rCls}">${icon}</td><td><strong>${p.nickname}</strong></td><td>${p.elo}</td><td>${p.kd}</td><td>${p.winRate}%</td></tr>`;
+                    html += `<tr><td class="${rCls}">${icon}</td><td><strong>${esc(p.nickname)}</strong></td><td>${p.elo}</td><td>${Number(p.kd).toFixed(2)}</td><td>${Number(p.winRate).toFixed(0)}%</td></tr>`;
                 });
             } else {
                 html = '<tr><td colspan="5" style="text-align:center;">Leaderboard is empty. Scan some players!</td></tr>';
