@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import java.sql.*;
 import java.util.ArrayList;

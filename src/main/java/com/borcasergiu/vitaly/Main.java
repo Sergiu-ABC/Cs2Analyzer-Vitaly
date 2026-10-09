@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import com.google.gson.Gson;
 import net.dv8tion.jda.api.JDABuilder;

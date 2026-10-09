@@ -10,4 +10,5 @@ target/
 
 # Local Database Files
 *.db
-*.sqlitedependency-reduced-pom.xml
+*.sqlite
+dependency-reduced-pom.xml

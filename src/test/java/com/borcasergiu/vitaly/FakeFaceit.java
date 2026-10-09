@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import com.sun.net.httpserver.HttpServer;
 

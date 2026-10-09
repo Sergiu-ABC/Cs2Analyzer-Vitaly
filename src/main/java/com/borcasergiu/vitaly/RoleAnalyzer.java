@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.utils.MarkdownSanitizer;
@@ -62,7 +62,7 @@ public class EmbedFactory {
                         " ] [ Win: " + stats.getWinRate() +
                         "% ] [ HS: " + stats.getHs() + "% ]\n```", false);
 
-        embed.addField("🧠 AI PLAYSTYLE VERDICT", roleResult, false);
+        embed.addField("🧠 PLAYSTYLE VERDICT", roleResult, false);
 
         embed.addField("🧬 PLAYER FINGERPRINT",
                 "```\n" +
@@ -74,7 +74,7 @@ public class EmbedFactory {
                         "```", false);
 
         embed.setImage(EmbedUtils.getBannerForRole(roleResult));
-        embed.setFooter("Requested by " + requesterName + " • Vitaly AI", requesterAvatar);
+        embed.setFooter("Requested by " + requesterName + " • Vitaly", requesterAvatar);
         embed.setTimestamp(Instant.now());
         return embed;
     }
@@ -212,7 +212,7 @@ public class EmbedFactory {
         embed.setColor(new Color(255, 165, 0));
         embed.setDescription("Your personal CS2 analyst. Drop a nickname and get a full breakdown.");
 
-        embed.addField("🎯 `!role <nickname>`",   "AI-powered playstyle analysis across 30 unique archetypes.", false);
+        embed.addField("🎯 `!role <nickname>`",   "Playstyle analysis across 30 unique archetypes.", false);
         embed.addField("📊 `!stats <nickname>`",  "Full combat dashboard — K/D, ADR, headshots, clutches.", false);
         embed.addField("🗺️ `!maps <nickname>`",   "Map mastery breakdown — exposes best maps and auto-vetoes.", false);
         embed.addField("🥊 `!compare <p1> <p2>`", "Head-to-head comparison to prove who is better.", false);
@@ -247,7 +247,7 @@ public class EmbedFactory {
         embed.addField("🤖 WHAT I DO",
                 """
                 • Fetch FACEIT player statistics instantly
-                • Analyze playstyles with AI role detection
+                • Analyze playstyles across 30 archetypes
                 • Compare players head-to-head
                 • Expose map weaknesses and comfort picks
                 • Track server leaderboard rankings

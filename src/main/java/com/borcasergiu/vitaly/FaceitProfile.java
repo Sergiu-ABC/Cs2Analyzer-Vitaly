@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 public class FaceitProfile {
     public String id;

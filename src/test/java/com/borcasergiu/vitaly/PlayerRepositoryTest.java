@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

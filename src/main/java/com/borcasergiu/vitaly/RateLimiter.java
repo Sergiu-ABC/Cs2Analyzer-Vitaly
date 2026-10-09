@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

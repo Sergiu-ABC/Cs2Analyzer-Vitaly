@@ -1,4 +1,4 @@
-package org.example;
+package com.borcasergiu.vitaly;
 
 import com.google.gson.annotations.SerializedName;
 import java.util.List;
